@@ -6,10 +6,6 @@ This file outlines advanced research tasks derived from three papers. Implementa
 
 ### Tasks
 - **Energy Utility Formulation**: Create an energy-based utility function for harvesting, consumption, and thermal load. Implement metrics Energetic Viability Score (EVS), Thermal Resilience Index (TRI), and Survival Horizon Expectation (SHE).
-- **Hardware/Simulation Environment**: Design sensors/actuators for measuring energy and temperature. Build a simulated grid world or physical testbed with spatial and temporal variations.
-- **Energy Harvesting and Thermal Regulation**: Integrate energy harvesting (e.g., photovoltaics, thermoelectrics) and thermal management components.
-- **Adaptive Computation Unit**: Implement computation modules that scale or throttle processing based on energy budget, with graceful degradation.
-- **Closed-Loop Control System**: Combine sensing, harvesting, thermal regulation, and computation in a single control loop with an energy-based policy.
 - **Learning Algorithm**: Implement a survival-focused RL algorithm (e.g., Q-learning variant) for balancing energy intake, computation, and thermal management.
 - **Multi-Agent Considerations**: Implement policies for coordination and resource sharing among multiple agents.
 
