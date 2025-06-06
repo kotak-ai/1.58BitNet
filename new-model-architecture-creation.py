@@ -120,7 +120,13 @@ for name, module in model.named_modules():
 def quantize_activations(model):
     for name, module in model.named_modules():
         if isinstance(module, nn.Linear) and not isinstance(module, BitLinear):
-            module.forward = lambda x: activation_quant(module(x))
+            orig_forward = module.forward
+
+            def forward_wrapper(x, *args, orig_forward=orig_forward, **kwargs):
+                out = orig_forward(x, *args, **kwargs)
+                return activation_quant(out)
+
+            module.forward = forward_wrapper
     return model
 
 # Modify the calculate_model_size function
