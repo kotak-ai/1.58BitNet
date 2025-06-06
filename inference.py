@@ -143,11 +143,19 @@ def evaluate_metrics(model, tokenizer, prompts, max_length=100):
     print(f"Average Memory Usage: {avg_memory_usage:.2f} MB")
 
 def calculate_perplexity(model, tokenizer, text):
-    input_ids = tokenizer.encode(prompt, return_tensors="pt").to(model.lm_head.weight.device)
+    input_ids = tokenizer.encode(text, return_tensors="pt").to(model.lm_head.weight.device)
+
     with torch.no_grad():
-        outputs = model(input_ids, attention_mask=torch.ones_like(input_ids))
-        loss = outputs.loss
+        logits = model(input_ids, attention_mask=torch.ones_like(input_ids))
+
+        shift_logits = logits[:, :-1, :].contiguous()
+        shift_labels = input_ids[:, 1:].contiguous()
+
+        loss_fct = nn.CrossEntropyLoss()
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+
         perplexity = torch.exp(loss)
+
     return perplexity.item()
 
 model_path = input("Enter the path to your optimized model: ")
