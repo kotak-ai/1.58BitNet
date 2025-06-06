@@ -197,7 +197,7 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tuning script.")
     parser.add_argument("--dataset", type=str, help="Path to the dataset file.")
-    parser.add_argument("--model_path", type=str, help="Path to the pre-trained model.")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the pre-trained model.")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training.")
     parser.add_argument("--num_epochs", type=int, default=3, help="Number of training epochs.")
     parser.add_argument("--learning_rate", type=float, default=1e-5, help="Learning rate for the optimizer.")
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     file_format = args.dataset.split(".")[-1]
     dataset = preprocess_dataset(args.dataset, file_format)
 
-    model_path = input("Please enter the path to the pre-trained model you want to fine-tune: ")
+    model_path = args.model_path
 
     # Load the model configuration from the pre-trained model directory
     config = LlamaConfig.from_pretrained(model_path)
