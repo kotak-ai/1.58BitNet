@@ -65,7 +65,7 @@ python trainingv2.py --dataset <dataset_path> --model_path <model_path> --batch_
 Sample training command:
 
 ```
-python trainingv2.py --dataset /Users/user/folder/Datasets/codeDataset/data/train.jsonl --batch_size 8 --num_epochs 5000 --output_dir /Users/user/Downloads/llama_750m_finetune_tritnet-v2 --iters 10000 --max_length 4096 --learning_rate 1e-4 --grad_accum_steps 10
+python trainingv2.py --dataset /Users/user/folder/Datasets/codeDataset/data/train.jsonl --model_path /Users/user/path/to/model --batch_size 8 --num_epochs 5000 --output_dir /Users/user/Downloads/llama_750m_finetune_tritnet-v2 --iters 10000 --max_length 4096 --learning_rate 1e-4 --grad_accum_steps 10
 ```
 
 ## Dataset
@@ -106,7 +106,7 @@ The `evaluate` function in `trainingv2.py` evaluates the model on a validation s
 
 ## Saving and Loading Models
 
-The model generated from `new-model-architecture-creation.py` will be saved in the same directory where you ran the script from. When running `trainingv2.py` you will be prompted to enter the path of that model. The output directory you specify in the training command will be where the finetuned model is saved. 
+The model generated from `new-model-architecture-creation.py` will be saved in the directory where you ran the script. Provide this path using the `--model_path` argument when running `trainingv2.py`. The output directory you specify in the training command will be where the finetuned model is saved.
 
 ## Contributing
 
