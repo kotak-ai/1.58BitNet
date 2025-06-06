@@ -1,6 +1,11 @@
 import torch
 import numpy as np
 
+
+def RMSNorm(x, eps: float = 1e-6):
+    """Compute RMS normalization used before quantization."""
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+
 def activation_quant(x):
     scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
     y = (x * scale).round().clamp_(-128, 127) / scale
