@@ -1,3 +1,8 @@
+def hadamard(n):
+    if n == 1: return torch.tensor([[1.]], dtype=torch.float32)
+    H = hadamard(n//2)
+    return torch.cat([torch.cat([H,H],dim=1),torch.cat([H,-H],dim=1)],dim=0)
+
 import math
 import torch
 import torch.nn as nn
@@ -9,7 +14,7 @@ class HBitLinear(nn.Linear):
         super().__init__(in_features, out_features, bias)
         # Precompute Hadamard matrix for input dimension if power of two
         if (in_features & (in_features - 1)) == 0:
-            self.register_buffer('hadamard', torch.tensor(torch.linalg.hadamard(in_features), dtype=torch.float32), persistent=False)
+            self.register_buffer('hadamard', torch.tensor(hadamard(in_features), dtype=torch.float32), persistent=False)
         else:
             self.hadamard = None
         self.eps = 1e-5
