@@ -228,29 +228,59 @@ class LlamaModel(nn.Module):
 
         return _embed_positions
 
-    def generate(self, input_ids, attention_mask=None, generation_config=None, **kwargs):
-        # Move the input tensors to the same device as the model
-        input_ids = input_ids.to(self.lm_head.weight.device)
+    def generate(
+        self,
+        input_ids,
+        attention_mask=None,
+        max_length=20,
+        do_sample=False,
+        temperature=1.0,
+        top_k=None,
+        top_p=None,
+    ):
+        """Simple autoregressive generation returning token ids."""
 
+        device = self.lm_head.weight.device
+        input_ids = input_ids.to(device)
         if attention_mask is not None:
-            attention_mask = attention_mask.to(self.lm_head.weight.device)
+            attention_mask = attention_mask.to(device)
 
-        # Generate cos and sin values
-        seq_length = input_ids.size(1)
-        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
-        position_embeddings = self.embed_positions(position_ids)
-        cos = position_embeddings[:, :, 0::2].cos()
-        sin = position_embeddings[:, :, 1::2].sin()
+        generated = input_ids
 
-        # Generate the output sequence using the model
-        output = self.forward(input_ids, attention_mask, cos, sin, **kwargs)
+        for _ in range(max_length):
+            logits = self.forward(generated, attention_mask)
+            next_token_logits = logits[:, -1, :] / temperature
 
-        # Apply the generation config to the output
-        if generation_config is not None:
-            output = generation_config.generate(output, input_ids, **kwargs)
+            if do_sample:
+                if top_k is not None and top_k > 0:
+                    values, indices = torch.topk(next_token_logits, top_k)
+                    logits_mask = torch.full_like(next_token_logits, float('-inf'))
+                    logits_mask.scatter_(-1, indices, values)
+                    next_token_logits = logits_mask
 
-        return output
+                if top_p is not None and 0 < top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                    cumulative_probs = torch.cumsum(torch.nn.functional.softmax(sorted_logits, dim=-1), dim=-1)
+                    sorted_indices_to_remove = cumulative_probs > top_p
+                    sorted_logits[sorted_indices_to_remove] = float('-inf')
+                    logits_mask = torch.full_like(next_token_logits, float('-inf'))
+                    logits_mask.scatter_(-1, sorted_indices, sorted_logits)
+                    next_token_logits = logits_mask
+
+                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+            generated = torch.cat([generated, next_token], dim=1)
+            if self.config.eos_token_id is not None and (next_token == self.config.eos_token_id).all():
+                break
+
+            if attention_mask is not None:
+                new_mask = torch.ones((attention_mask.size(0), 1), device=device, dtype=attention_mask.dtype)
+                attention_mask = torch.cat([attention_mask, new_mask], dim=1)
+
+        return generated
 
     @classmethod
     def load_pretrained(cls, model_path):
