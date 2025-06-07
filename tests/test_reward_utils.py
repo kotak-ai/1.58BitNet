@@ -15,6 +15,11 @@ class RewardUtilsTest(unittest.TestCase):
         self.assertGreater(val, 0.0)
         self.assertLess(val, 1.0)
 
+    def test_synonym(self):
+        self.assertGreater(qa_reward("car", "automobile"), 0.0)
+
+    def test_stemming(self):
+        self.assertAlmostEqual(qa_reward("running", "run"), 1.0)
 
 if __name__ == "__main__":
     unittest.main()

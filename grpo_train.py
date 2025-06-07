@@ -5,6 +5,7 @@ import torch
 from transformers import AutoTokenizer
 from llama_model import LlamaModel
 from grpo import GRPOTrainer
+from grpo_data import load_qa_dataset, build_grpo_batch
 from reward_utils import qa_reward
 
 
@@ -78,7 +79,6 @@ def prepare_batch(samples, tokenizer, model, group_size, max_length):
     reward_tensor = torch.tensor(rewards, dtype=torch.float)
     return queries, resp_tensor, len_tensor, reward_tensor
 
-
 def main():
     parser = argparse.ArgumentParser(description="GRPO training loop")
     parser.add_argument("--dataset", type=str, required=True, help="Path to JSON or JSONL dataset")
@@ -92,8 +92,7 @@ def main():
     parser.add_argument("--clip_eps", type=float, default=0.2)
     parser.add_argument("--beta", type=float, default=0.01)
     args = parser.parse_args()
-
-    dataset = load_dataset(args.dataset)
+    dataset = load_qa_dataset(args.dataset)
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     model = LlamaModel.load_pretrained(args.model_path)
     ref_model = LlamaModel.load_pretrained(args.model_path)
@@ -102,7 +101,7 @@ def main():
 
     for step in range(args.steps):
         batch = random.sample(dataset, args.batch_size)
-        q, r, l, rew = prepare_batch(batch, tokenizer, model, args.group_size, args.max_length)
+        q, r, l, rew = build_grpo_batch(batch, tokenizer, model, args.group_size, args.max_length)
         loss = trainer.step(q, r, l, rew, optimizer)
         if step % 10 == 0:
             print(f"Step {step}: loss {loss.item():.4f}")
