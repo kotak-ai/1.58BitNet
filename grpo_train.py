@@ -5,6 +5,7 @@ import torch
 from transformers import AutoTokenizer
 from llama_model import LlamaModel
 from grpo import GRPOTrainer
+from reward_utils import qa_reward
 
 
 def load_dataset(path):
@@ -25,8 +26,8 @@ def load_dataset(path):
 
 
 def reward_fn(generated: str, reference: str) -> float:
-    """Simple reward: 1.0 if strings match else 0.0."""
-    return float(generated.strip() == reference.strip())
+    """F1-based reward for QA datasets."""
+    return qa_reward(generated, reference)
 
 
 def pad_sequences(seqs, pad_id):
