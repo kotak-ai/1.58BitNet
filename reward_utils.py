@@ -3,10 +3,10 @@
 from collections import Counter
 import re
 from typing import Set
-
 import torch
-
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from nltk.stem import PorterStemmer
+
 try:
     from nltk.corpus import wordnet as wn
     _WN_AVAILABLE = True
@@ -21,14 +21,11 @@ _SYNONYMS = {
     "automobile": {"car", "auto"},
 }
 
-
 def _normalize(text: str) -> str:
-    """Lowercase and strip punctuation."""
     text = text.lower()
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     text = " ".join(text.split())
     return text
-
 
 def _tokenize(text: str) -> Set[str]:
     tokens = [_STEM.stem(t) for t in _normalize(text).split()]
@@ -51,15 +48,16 @@ def _tokenize(text: str) -> Set[str]:
 
 def f1_score(prediction: str, ground_truth: str) -> float:
     """Robust F1 that uses stemming and optional WordNet synonyms."""
-    pred_tokens = _tokenize(prediction)
-    gold_tokens = _tokenize(ground_truth)
-    if not pred_tokens or not gold_tokens:
+    pred_tokens = _normalize(prediction).split()
+    gold_tokens = _normalize(ground_truth).split()
+    common = Counter(pred_tokens) & Counter(gold_tokens)
+    num_same = sum(common.values())
+    if len(pred_tokens) == 0 or len(gold_tokens) == 0:
         return float(pred_tokens == gold_tokens)
-    common = pred_tokens & gold_tokens
-    if not common:
+    if num_same == 0:
         return 0.0
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(gold_tokens)
+    precision = num_same / len(pred_tokens)
+    recall = num_same / len(gold_tokens)
     return 2 * precision * recall / (precision + recall)
 
 
@@ -73,7 +71,7 @@ class RewardModelScorer:
 
     def __init__(self, model_name: str):
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
+        
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         self.model.eval()

@@ -21,6 +21,5 @@ class RewardUtilsTest(unittest.TestCase):
     def test_stemming(self):
         self.assertAlmostEqual(qa_reward("running", "run"), 1.0)
 
-
 if __name__ == "__main__":
     unittest.main()
