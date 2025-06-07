@@ -9,7 +9,10 @@ from reward_utils import qa_reward
 
 
 def load_dataset(path):
-    """Load a dataset of {"query":..., "answer":...}. Supports JSON and JSONL."""
+    """Load a QA dataset from JSON or JSONL files.
+
+    Each record must contain ``query`` and ``answer`` keys.
+    """
     data = []
     if path.endswith(".jsonl"):
         with open(path, 'r', encoding='utf-8') as f:
