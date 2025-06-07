@@ -92,6 +92,7 @@ def main():
     parser.add_argument("--clip_eps", type=float, default=0.2)
     parser.add_argument("--beta", type=float, default=0.01)
     args = parser.parse_args()
+
     dataset = load_qa_dataset(args.dataset)
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     model = LlamaModel.load_pretrained(args.model_path)

@@ -58,6 +58,7 @@ def f1_score(prediction: str, ground_truth: str) -> float:
         return 0.0
     precision = num_same / len(pred_tokens)
     recall = num_same / len(gold_tokens)
+    
     return 2 * precision * recall / (precision + recall)
 
 
@@ -71,7 +72,6 @@ class RewardModelScorer:
 
     def __init__(self, model_name: str):
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
-        
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         self.model.eval()
