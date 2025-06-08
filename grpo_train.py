@@ -79,7 +79,22 @@ def prepare_batch(samples, tokenizer, model, group_size, max_length):
     reward_tensor = torch.tensor(rewards, dtype=torch.float)
     return queries, resp_tensor, len_tensor, reward_tensor
 
-def main():
+
+def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int, path: str) -> None:
+    """Save model/optimizer states and step to ``path``."""
+    torch.save({"model": model.state_dict(), "optim": optimizer.state_dict(), "step": step}, path)
+
+
+def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, path: str) -> int:
+    """Load model/optimizer states from ``path`` and return training step."""
+    ckpt = torch.load(path, map_location="cpu")
+    model.load_state_dict(ckpt["model"])
+    optimizer.load_state_dict(ckpt["optim"])
+    return int(ckpt.get("step", 0))
+
+
+def get_arg_parser() -> argparse.ArgumentParser:
+    """Return an ArgumentParser with all CLI options."""
     parser = argparse.ArgumentParser(description="GRPO training loop")
     parser.add_argument("--dataset", type=str, required=True, help="Path to JSON or JSONL dataset")
     parser.add_argument("--model_path", type=str, required=True, help="Directory with pretrained model")
@@ -91,7 +106,26 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--clip_eps", type=float, default=0.2)
     parser.add_argument("--beta", type=float, default=0.01)
+    parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
+    return parser
+
+
+def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Apply configuration from ``args.config`` to ``args`` and parser defaults."""
+    if not getattr(args, "config", None):
+        return
+    with open(args.config, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    for key, value in cfg.items():
+        old_default = parser.get_default(key)
+        parser.set_defaults(**{key: value})
+        if hasattr(args, key) and getattr(args, key) == old_default:
+            setattr(args, key, value)
+
+def main():
+    parser = get_arg_parser()
     args = parser.parse_args()
+    update_args_with_config(args, parser)
 
     dataset = load_qa_dataset(args.dataset)
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
