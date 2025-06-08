@@ -4,7 +4,7 @@ import random
 import torch
 from transformers import AutoTokenizer
 from llama_model import LlamaModel
-from grpo import GRPOTrainer
+from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 from grpo_data import load_qa_dataset, build_grpo_batch
 from reward_utils import qa_reward
 
@@ -107,6 +107,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip_eps", type=float, default=0.2)
     parser.add_argument("--beta", type=float, default=0.01)
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
+    parser.add_argument("--two_layer", action="store_true", help="Use MultiLayer GRPO")
     return parser
 
 
@@ -131,15 +132,34 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     model = LlamaModel.load_pretrained(args.model_path)
     ref_model = LlamaModel.load_pretrained(args.model_path)
-    trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
+    if args.two_layer:
+        answers_holder = {"answers": []}
+
+        def verifier(resp: torch.Tensor) -> bool:
+            text = tokenizer.decode(resp.tolist())
+            return any(qa_reward(text, a) >= 0.8 for a in answers_holder["answers"])
+
+        trainer = MultiLayerGRPOTrainer(
+            model, ref_model, verifier, clip_eps=args.clip_eps, beta=args.beta
+        )
+    else:
+        trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     for step in range(args.steps):
         batch = random.sample(dataset, args.batch_size)
         q, r, l, rew = build_grpo_batch(batch, tokenizer, model, args.group_size, args.max_length)
-        loss = trainer.step(q, r, l, rew, optimizer)
-        if step % 10 == 0:
-            print(f"Step {step}: loss {loss.item():.4f}")
+        if args.two_layer:
+            answers_holder["answers"] = [s["answer"] for s in batch]
+            loss, rate = trainer.train_batch(q, r, l, rew, optimizer)
+            if step % 10 == 0:
+                print(
+                    f"Step {step}: loss {loss.item():.4f}, correction rate {rate:.2f}"
+                )
+        else:
+            loss = trainer.step(q, r, l, rew, optimizer)
+            if step % 10 == 0:
+                print(f"Step {step}: loss {loss.item():.4f}")
 
     model.save_pretrained(args.output_dir)
 
