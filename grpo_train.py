@@ -108,6 +108,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beta", type=float, default=0.01)
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
     parser.add_argument("--two_layer", action="store_true", help="Use MultiLayer GRPO")
+    parser.add_argument("--resume", type=str, default=None, help="Resume training from checkpoint")
     return parser
 
 
@@ -145,8 +146,12 @@ def main():
     else:
         trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    start_step = 0
+    if args.resume:
+        start_step = load_checkpoint(model, optimizer, args.resume)
+        print(f"Resumed from step {start_step}")
 
-    for step in range(args.steps):
+    for step in range(start_step, args.steps):
         batch = random.sample(dataset, args.batch_size)
         q, r, l, rew = build_grpo_batch(batch, tokenizer, model, args.group_size, args.max_length)
         if args.two_layer:
@@ -162,6 +167,8 @@ def main():
                 print(f"Step {step}: loss {loss.item():.4f}")
 
     model.save_pretrained(args.output_dir)
+    if args.resume:
+        save_checkpoint(model, optimizer, args.steps, args.resume)
 
 
 if __name__ == "__main__":
