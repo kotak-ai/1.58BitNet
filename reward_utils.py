@@ -17,8 +17,8 @@ _STEM = PorterStemmer()
 
 # minimal synonym fallback when WordNet is unavailable
 _SYNONYMS = {
-    "car": {"automobile", "auto"},
-    "automobile": {"car", "auto"},
+    _STEM.stem("car"): {_STEM.stem("automobile"), _STEM.stem("auto")},
+    _STEM.stem("automobile"): {_STEM.stem("car"), _STEM.stem("auto")},
 }
 
 def _normalize(text: str) -> str:
@@ -48,17 +48,16 @@ def _tokenize(text: str) -> Set[str]:
 
 def f1_score(prediction: str, ground_truth: str) -> float:
     """Robust F1 that uses stemming and optional WordNet synonyms."""
-    pred_tokens = _normalize(prediction).split()
-    gold_tokens = _normalize(ground_truth).split()
-    common = Counter(pred_tokens) & Counter(gold_tokens)
-    num_same = sum(common.values())
+    pred_tokens = _tokenize(prediction)
+    gold_tokens = _tokenize(ground_truth)
     if len(pred_tokens) == 0 or len(gold_tokens) == 0:
         return float(pred_tokens == gold_tokens)
+    num_same = len(pred_tokens & gold_tokens)
     if num_same == 0:
         return 0.0
     precision = num_same / len(pred_tokens)
     recall = num_same / len(gold_tokens)
-    
+
     return 2 * precision * recall / (precision + recall)
 
 
