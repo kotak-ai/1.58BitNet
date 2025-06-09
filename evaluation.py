@@ -1,6 +1,5 @@
 import argparse
 from llama_model import LlamaModel
-from transformers import AutoTokenizer
 from grpo_data import load_qa_dataset
 from reward_utils import qa_reward
 
@@ -29,6 +28,7 @@ def main():
     args = parser.parse_args()
 
     data = load_qa_dataset(args.dataset)
+    from transformers import AutoTokenizer
     ce_tok = AutoTokenizer.from_pretrained(args.ce_model)
     grpo_tok = AutoTokenizer.from_pretrained(args.grpo_model)
     ce_model = LlamaModel.load_pretrained(args.ce_model)
