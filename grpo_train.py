@@ -4,8 +4,9 @@ import random
 import torch
 from llama_model import LlamaModel
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
-from grpo_data import load_qa_dataset, build_grpo_batch
+from grpo_data import load_qa_dataset, build_grpo_batch, f1_reward
 from reward_utils import qa_reward
+from reward_model import RewardModel
 
 
 def load_dataset(path):
@@ -25,10 +26,6 @@ def load_dataset(path):
     return data
 
 
-def reward_fn(generated: str, reference: str) -> float:
-    """F1-based reward for QA datasets."""
-    return qa_reward(generated, reference)
-
 
 def pad_sequences(seqs, pad_id):
     max_len = max(len(s) for s in seqs)
@@ -40,7 +37,7 @@ def pad_sequences(seqs, pad_id):
     return tensor, lengths
 
 
-def prepare_batch(samples, tokenizer, model, group_size, max_length):
+def prepare_batch(samples, tokenizer, model, group_size, max_length, reward_fn=f1_reward):
     q_tokens = [tokenizer.encode(s['query'], add_special_tokens=False) for s in samples]
     answers = [s['answer'] for s in samples]
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
@@ -62,7 +59,7 @@ def prepare_batch(samples, tokenizer, model, group_size, max_length):
             grp_resp.append(resp)
             grp_len.append(len(resp))
             gen_text = tokenizer.decode(resp)
-            grp_rew.append(reward_fn(gen_text, answers[i]))
+            grp_rew.append(reward_fn(gen_text, answers[i], samples[i]["query"]))
         responses.append(grp_resp)
         lengths.append(grp_len)
         rewards.append(grp_rew)
@@ -108,6 +105,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
     parser.add_argument("--two_layer", action="store_true", help="Use MultiLayer GRPO")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from checkpoint")
+    parser.add_argument(
+        "--reward_model",
+        type=str,
+        default=None,
+        help="Path to RewardModel checkpoint (use F1 reward if not set)",
+    )
     return parser
 
 
@@ -131,6 +134,14 @@ def main():
     dataset = load_qa_dataset(args.dataset)
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+
+    if args.reward_model:
+        reward_model = RewardModel.load(args.reward_model, tokenizer)
+        def reward_fn(gen: str, ref: str, query: str) -> float:
+            return reward_model.score(query, gen)
+    else:
+        def reward_fn(gen: str, ref: str, query: str) -> float:
+            return qa_reward(gen, ref)
     model = LlamaModel.load_pretrained(args.model_path)
     ref_model = LlamaModel.load_pretrained(args.model_path)
     if args.two_layer:
@@ -153,7 +164,14 @@ def main():
 
     for step in range(start_step, args.steps):
         batch = random.sample(dataset, args.batch_size)
-        q, r, l, rew = build_grpo_batch(batch, tokenizer, model, args.group_size, args.max_length)
+        q, r, l, rew = build_grpo_batch(
+            batch,
+            tokenizer,
+            model,
+            args.group_size,
+            args.max_length,
+            reward_fn=reward_fn,
+        )
         if args.two_layer:
             answers_holder["answers"] = [s["answer"] for s in batch]
             loss, rate = trainer.train_batch(q, r, l, rew, optimizer)
