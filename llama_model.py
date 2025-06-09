@@ -12,6 +12,7 @@ except Exception:  # pragma: no cover - safetensors may be missing
     save_file = load_file = None  # type: ignore[misc]
 import os
 import json
+import shutil
 from tqdm import tqdm
 import numpy as np
 import time
