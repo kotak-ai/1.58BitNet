@@ -1,9 +1,15 @@
 import math
 import torch
 import torch.nn as nn
-from transformers import LlamaConfig, AutoTokenizer
+try:
+    from transformers import LlamaConfig, AutoTokenizer
+except Exception:  # pragma: no cover - transformers may be missing
+    LlamaConfig = AutoTokenizer = None  # type: ignore[misc]
 from quantization_utils import quantize_tensor, activation_quant, weight_quant, activation_norm_quant, gemm_lowbit_kernel_mps, kv_cache_quant, act_quant_8bit, act_quant_4bit, quantize_tensor_1_58bit
-from safetensors.torch import save_file, load_file
+try:
+    from safetensors.torch import save_file, load_file
+except Exception:  # pragma: no cover - safetensors may be missing
+    save_file = load_file = None  # type: ignore[misc]
 import os
 import json
 from tqdm import tqdm
@@ -284,6 +290,10 @@ class LlamaModel(nn.Module):
 
     @classmethod
     def load_pretrained(cls, model_path):
+        if LlamaConfig is None:
+            raise ImportError("transformers is required to load pretrained models")
+        if load_file is None:
+            raise ImportError("safetensors is required to load pretrained models")
         # Load the model configuration
         config = LlamaConfig.from_pretrained(model_path)
 
@@ -324,6 +334,10 @@ class LlamaModel(nn.Module):
         return lm_logits
 
     def save_pretrained(self, save_directory):
+        if AutoTokenizer is None:
+            raise ImportError("transformers is required to save pretrained models")
+        if save_file is None:
+            raise ImportError("safetensors is required to save pretrained models")
         # Update the model configuration with the quantized model's parameters
         self.config.hidden_size = self.embed_tokens.embedding_dim
         self.config.num_attention_heads = self.config.hidden_size // self.layers[0].self_attn.head_dim
@@ -420,6 +434,8 @@ class LlamaModel(nn.Module):
         save_file(quantized_state_dict, os.path.join(save_directory, "model.safetensors"))
 
     def save_sharded_safetensors(self, output_path, shard_size=9*1024*1024*1024):
+        if save_file is None:
+            raise ImportError("safetensors is required to save sharded weights")
         state_dict = self.state_dict()
         num_shards = math.ceil(sum(v.numel() * v.element_size() for v in state_dict.values()) / shard_size)
 

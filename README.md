@@ -44,6 +44,11 @@ I also think that this isnt completely optimized for memory management and there
 ## Installation
 Git clone the repo
 
+WordNet data is used for evaluation to handle synonyms.  If you wish to enable
+synonym expansion you must install the `nltk` package and download its
+``wordnet`` corpus offline.  The project can also fall back to the optional
+`wn` library when an appropriate lexicon (e.g. ``omw-en``) is installed.
+
 ## Usage
 1. Run new-model-architecture-creation.py
 2. You'll be prompted for how many parameters you want your model to be. The script will create the model and save it in the same repo as where the files are saved

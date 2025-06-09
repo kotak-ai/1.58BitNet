@@ -1,5 +1,5 @@
 import unittest
-from reward_utils import qa_reward
+from reward_utils import qa_reward, _WN_AVAILABLE
 
 
 class RewardUtilsTest(unittest.TestCase):
@@ -15,6 +15,7 @@ class RewardUtilsTest(unittest.TestCase):
         self.assertGreater(val, 0.0)
         self.assertLess(val, 1.0)
 
+    @unittest.skipUnless(_WN_AVAILABLE, "WordNet not available")
     def test_synonym(self):
         self.assertGreater(qa_reward("car", "automobile"), 0.0)
 

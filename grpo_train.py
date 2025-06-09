@@ -2,7 +2,6 @@ import argparse
 import json
 import random
 import torch
-from transformers import AutoTokenizer
 from llama_model import LlamaModel
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 from grpo_data import load_qa_dataset, build_grpo_batch
@@ -130,6 +129,7 @@ def main():
     update_args_with_config(args, parser)
 
     dataset = load_qa_dataset(args.dataset)
+    from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     model = LlamaModel.load_pretrained(args.model_path)
     ref_model = LlamaModel.load_pretrained(args.model_path)

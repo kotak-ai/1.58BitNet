@@ -4,22 +4,48 @@ from collections import Counter
 import re
 from typing import Set
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+try:
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+except Exception:  # pragma: no cover - transformers may be missing
+    AutoTokenizer = AutoModelForSequenceClassification = None  # type: ignore[misc]
 from nltk.stem import PorterStemmer
 
+# Attempt to provide WordNet access via nltk first and fall back to the
+# optional ``wn`` library when available.  ``_get_synsets`` is defined to
+# return an iterable of synsets for a token or an empty list when no WordNet
+# data is accessible.
 try:
-    from nltk.corpus import wordnet as wn
-    _WN_AVAILABLE = True
-except Exception:  # pragma: no cover - wordnet may be missing
+    from nltk.corpus import wordnet as _nltk_wn
+    try:
+        _nltk_wn.synsets("test")  # verify corpus exists
+        _WN_AVAILABLE = True
+        def _get_synsets(token: str):
+            return _nltk_wn.synsets(token)
+    except LookupError:
+        _WN_AVAILABLE = False
+except Exception:  # pragma: no cover - nltk may be missing
     _WN_AVAILABLE = False
+
+if not _WN_AVAILABLE:
+    try:
+        import wn as _wnlib  # type: ignore
+        try:
+            _wnlex = _wnlib.Wordnet("omw-en")
+            _wnlex.synsets("test")  # verify lexicon exists
+            _WN_AVAILABLE = True
+            def _get_synsets(token: str):
+                return _wnlex.synsets(token)
+        except Exception:
+            _WN_AVAILABLE = False
+    except Exception:  # pragma: no cover - wn package missing
+        _WN_AVAILABLE = False
+
+if not _WN_AVAILABLE:  # pragma: no cover - executed when WordNet missing
+    def _get_synsets(token: str):
+        return []
 
 _STEM = PorterStemmer()
 
-# minimal synonym fallback when WordNet is unavailable
-_SYNONYMS = {
-    _STEM.stem("car"): {_STEM.stem("automobile"), _STEM.stem("auto")},
-    _STEM.stem("automobile"): {_STEM.stem("car"), _STEM.stem("auto")},
-}
 
 def _normalize(text: str) -> str:
     text = text.lower()
@@ -32,17 +58,9 @@ def _tokenize(text: str) -> Set[str]:
     expanded: Set[str] = set(tokens)
     if _WN_AVAILABLE:
         for t in list(expanded):
-            try:
-                syns = wn.synsets(t)
-            except LookupError:  # corpus not downloaded
-                syns = []
-            for syn in syns:
+            for syn in _get_synsets(t):
                 for lemma in syn.lemma_names():
                     expanded.add(_STEM.stem(lemma.lower()))
-    # manual synonyms fallback
-    for t in list(expanded):
-        if t in _SYNONYMS:
-            expanded.update(_STEM.stem(s) for s in _SYNONYMS[t])
     return expanded
 
 
@@ -70,7 +88,8 @@ class RewardModelScorer:
     """Use a sequence classification model to score responses."""
 
     def __init__(self, model_name: str):
-        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        if AutoTokenizer is None or AutoModelForSequenceClassification is None:
+            raise ImportError("transformers is required for RewardModelScorer")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         self.model.eval()
