@@ -1,7 +1,7 @@
 import unittest
 import torch
 
-from grpo_data import build_grpo_batch
+from grpo_data import build_grpo_batch, f1_reward
 
 class DummyTokenizer:
     pad_token_id = 0
@@ -24,7 +24,9 @@ class GRPODataTest(unittest.TestCase):
         data = [{'query': 'hi', 'answer': 'hello'}]
         tok = DummyTokenizer()
         model = DummyModel()
-        q, r, l, rew = build_grpo_batch(data, tok, model, group_size=2, max_length=3)
+        q, r, l, rew = build_grpo_batch(
+            data, tok, model, group_size=2, max_length=3, reward_fn=f1_reward
+        )
         self.assertEqual(q.size(0), 1)
         self.assertEqual(r.shape[:2], (1,2))
         self.assertEqual(l.shape, (1,2))

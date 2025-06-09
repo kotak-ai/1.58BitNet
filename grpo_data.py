@@ -5,6 +5,11 @@ from typing import List, Dict, Callable
 from reward_utils import qa_reward
 
 
+def f1_reward(generated: str, reference: str, query: str) -> float:
+    """Wrapper that ignores ``query`` when computing F1."""
+    return qa_reward(generated, reference)
+
+
 def load_qa_dataset(path: str) -> List[Dict[str, str]]:
     """Load a QA dataset where each record has 'query' and 'answer'."""
     data = []
@@ -36,7 +41,7 @@ def build_grpo_batch(
     model,
     group_size: int,
     max_length: int,
-    reward_fn: Callable[[str, str], float] = qa_reward,
+    reward_fn: Callable[[str, str, str], float] = f1_reward,
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
     """Generate candidate responses and compute rewards."""
     q_tokens = [tokenizer.encode(s['query'], add_special_tokens=False) for s in samples]
@@ -60,7 +65,7 @@ def build_grpo_batch(
             grp_resp.append(resp)
             grp_len.append(len(resp))
             gen_text = tokenizer.decode(resp)
-            grp_rew.append(reward_fn(gen_text, answers[i]))
+            grp_rew.append(reward_fn(gen_text, answers[i], samples[i]["query"]))
         responses.append(grp_resp)
         lengths.append(grp_len)
         rewards.append(grp_rew)
