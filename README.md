@@ -69,3 +69,15 @@ python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model r
 python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_model
 ```
 
+
+## Simple Reward Model Example
+
+`simple_reward_model.py` illustrates how to build a tiny classifier for scoring question/answer pairs.  It trains a small linear model on a toy dataset and outputs reward probabilities for new pairs.
+
+Run the demo with:
+
+```bash
+python simple_reward_model.py
+```
+
+This prints higher scores for correct answers than incorrect ones and can be used as a starting point for custom reward models.
