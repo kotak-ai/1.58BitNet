@@ -121,6 +121,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--log_interval", type=int, default=10, help="Steps between logging metrics")
     parser.add_argument("--csv_log", type=str, default=None, help="Optional CSV log file")
+    parser.add_argument(
+        "--guiding_prompt",
+        type=str,
+        default="Review and correct the answer:",
+        help="Guiding prompt for the second GRPO layer",
+    )
     parser.add_argument("--progress", action="store_true", help="Show progress bar if tqdm is available")
     return parser
 
@@ -183,7 +189,7 @@ def main():
             ref_model,
             verifier,
             tokenizer,
-            guiding_prompt="Fix the answer:",
+            guiding_prompt=args.guiding_prompt,
             clip_eps=args.clip_eps,
             beta=args.beta,
         )
