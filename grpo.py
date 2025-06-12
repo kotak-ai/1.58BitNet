@@ -64,39 +64,69 @@ class GRPOTrainer:
 
 class MultiLayerGRPOTrainer:
     """Two-layer GRPO with self-correction."""
-    def __init__(self, model: nn.Module, ref_model: nn.Module, verifier, clip_eps: float = 0.2, beta: float = 0.01):
+
+    def __init__(
+        self,
+        model: nn.Module,
+        ref_model: nn.Module,
+        verifier,
+        tokenizer,
+        guiding_prompt: str,
+        clip_eps: float = 0.2,
+        beta: float = 0.01,
+    ):
         self.layer1 = GRPOTrainer(model, ref_model, clip_eps, beta)
         self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta)
         self.verifier = verifier
+        self.guidance_tokens = torch.tensor(
+            tokenizer.encode(guiding_prompt, add_special_tokens=False),
+            dtype=torch.long,
+        )
+        pad_id = getattr(tokenizer, "pad_token_id", None)
+        if pad_id is None:
+            pad_id = getattr(tokenizer, "eos_token_id", 0)
+        self.pad_id = pad_id
 
     def train_batch(self, queries: torch.Tensor, responses: torch.Tensor, lengths: torch.Tensor, rewards: torch.Tensor, optimizer: torch.optim.Optimizer) -> Tuple[torch.Tensor, float]:
         B, G, L = responses.shape
         loss1 = self.layer1.step(queries, responses, lengths, rewards, optimizer)
-        # construct second layer inputs
+        # attempt self-correction using the second layer
         corrected = []
         corrected_len = []
         corrected_rewards = []
+        corrected_queries = []
+        success = 0
         for b in range(B):
             for g in range(G):
-                resp = responses[b, g]
-                if self.verifier(resp):
-                    corrected.append(resp)
-                    corrected_len.append(lengths[b, g])
-                    corrected_rewards.append(1.0)
-                else:
-                    # attempt correction by appending guiding token 0
-                    new_resp = torch.cat([queries[b], resp])[:L]
-                    if self.verifier(new_resp):
-                        corrected.append(new_resp)
-                        corrected_len.append(min(len(new_resp), L))
-                        corrected_rewards.append(1.0)
+                resp = responses[b, g, : lengths[b, g]]
+                inp = torch.cat([
+                    self.guidance_tokens,
+                    queries[b],
+                    resp,
+                ])
+                with torch.no_grad():
+                    gen = self.layer2.model.generate(
+                        inp.unsqueeze(0),
+                        max_length=inp.size(0) + L,
+                        do_sample=True,
+                    )
+                new_resp = gen[0, inp.size(0) :]
+                reward_val = 1.0 if self.verifier(new_resp) else 0.0
+                success += int(reward_val > 0)
+                corrected.append(new_resp)
+                corrected_len.append(new_resp.numel())
+                corrected_rewards.append(reward_val)
+                corrected_queries.append(queries[b])
         if not corrected:
             return loss1, 0.0
-        corr_tensor = torch.stack(corrected)
-        corr_len = torch.tensor(corrected_len, dtype=torch.long)
-        corr_rewards = torch.tensor(corrected_rewards, dtype=torch.float)
-        corr_tensor = corr_tensor.unsqueeze(1)
-        corr_len = corr_len.unsqueeze(1)
-        corr_rewards = corr_rewards.unsqueeze(1)
-        loss2 = self.layer2.step(queries[:corr_tensor.size(0)], corr_tensor, corr_len, corr_rewards, optimizer)
-        return loss1 + loss2, float(len(corrected)) / (B * G)
+        max_len = max(corrected_len)
+        corr_tensor = torch.full(
+            (len(corrected), 1, max_len), self.pad_id, dtype=torch.long
+        )
+        for i, seq in enumerate(corrected):
+            corr_tensor[i, 0, : seq.numel()] = seq
+        corr_len = torch.tensor(corrected_len, dtype=torch.long).unsqueeze(1)
+        corr_rewards = torch.tensor(corrected_rewards, dtype=torch.float).unsqueeze(1)
+        corr_queries = torch.stack(corrected_queries)
+        loss2 = self.layer2.step(corr_queries, corr_tensor, corr_len, corr_rewards, optimizer)
+        return loss1 + loss2, float(success) / (B * G)

@@ -179,7 +179,13 @@ def main():
             return any(qa_reward(text, a) >= 0.8 for a in answers_holder["answers"])
 
         trainer = MultiLayerGRPOTrainer(
-            model, ref_model, verifier, clip_eps=args.clip_eps, beta=args.beta
+            model,
+            ref_model,
+            verifier,
+            tokenizer,
+            guiding_prompt="Fix the answer:",
+            clip_eps=args.clip_eps,
+            beta=args.beta,
         )
     else:
         trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
