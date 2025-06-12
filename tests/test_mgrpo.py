@@ -2,6 +2,14 @@ import torch
 import unittest
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 
+
+class DummyTokenizer:
+    pad_token_id = 0
+    eos_token_id = 1
+
+    def encode(self, text, add_special_tokens=False):
+        return [ord(c) % 10 + 2 for c in text.lower()]
+
 class DummyModel(torch.nn.Module):
     def __init__(self, vocab=10):
         super().__init__()
@@ -10,6 +18,12 @@ class DummyModel(torch.nn.Module):
     def forward(self, x):
         emb = self.embed(x)
         return self.linear(emb)
+
+    def generate(self, inp, max_length, do_sample=True):
+        B = inp.size(0)
+        L = max_length - inp.size(1)
+        gen = torch.randint(0, self.linear.out_features, (B, L))
+        return torch.cat([inp, gen], dim=1)
 
 def simple_verifier(resp: torch.Tensor) -> bool:
     return int(resp[-1]) % 2 == 0
@@ -30,7 +44,14 @@ class GRPOTest(unittest.TestCase):
     def test_multilayer(self):
         model = DummyModel()
         ref = DummyModel()
-        trainer = MultiLayerGRPOTrainer(model, ref, simple_verifier)
+        tok = DummyTokenizer()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_verifier,
+            tok,
+            guiding_prompt="fix",
+        )
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         queries = torch.randint(0, 10, (1, 3))
         responses = torch.randint(0, 10, (1, 2, 4))
