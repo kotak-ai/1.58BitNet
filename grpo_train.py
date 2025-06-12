@@ -1,12 +1,20 @@
 import argparse
 import json
 import random
+import logging
+import csv
+import os
 import torch
 from llama_model import LlamaModel
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 from grpo_data import load_qa_dataset, build_grpo_batch, f1_reward
 from reward_utils import qa_reward
 from reward_model import RewardModel
+
+try:  # progress bar is optional
+    from tqdm import tqdm
+except Exception:  # pragma: no cover - tqdm may not be installed
+    tqdm = None
 
 
 def load_dataset(path):
@@ -111,6 +119,9 @@ def get_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to RewardModel checkpoint (use F1 reward if not set)",
     )
+    parser.add_argument("--log_interval", type=int, default=10, help="Steps between logging metrics")
+    parser.add_argument("--csv_log", type=str, default=None, help="Optional CSV log file")
+    parser.add_argument("--progress", action="store_true", help="Show progress bar if tqdm is available")
     return parser
 
 
@@ -130,6 +141,22 @@ def main():
     parser = get_arg_parser()
     args = parser.parse_args()
     update_args_with_config(args, parser)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s:%(message)s",
+    )
+
+    csv_writer = None
+    if args.csv_log:
+        fieldnames = ["step", "loss", "mean_reward", "kl"]
+        if args.two_layer:
+            fieldnames.append("correction_rate")
+        write_header = not os.path.exists(args.csv_log)
+        csv_file = open(args.csv_log, "a", newline="")
+        csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        if write_header:
+            csv_writer.writeheader()
 
     dataset = load_qa_dataset(args.dataset)
     from transformers import AutoTokenizer
@@ -160,9 +187,13 @@ def main():
     start_step = 0
     if args.resume:
         start_step = load_checkpoint(model, optimizer, args.resume)
-        print(f"Resumed from step {start_step}")
+        logging.info("Resumed from step %d", start_step)
 
-    for step in range(start_step, args.steps):
+    iterator = range(start_step, args.steps)
+    if args.progress and tqdm is not None:
+        iterator = tqdm(iterator, total=args.steps, initial=start_step)
+
+    for step in iterator:
         batch = random.sample(dataset, args.batch_size)
         q, r, l, rew = build_grpo_batch(
             batch,
@@ -172,21 +203,56 @@ def main():
             args.max_length,
             reward_fn=reward_fn,
         )
+        mean_reward = float(rew.mean())
+
+        with torch.no_grad():
+            B, G, L = r.shape
+            flat_r = r.view(B * G, L)
+            flat_l = l.view(B * G)
+            logits_p = model(flat_r)
+            logits_ref = ref_model(flat_r)
+            if args.two_layer:
+                log_fn = trainer.layer1._log_probs
+            else:
+                log_fn = trainer._log_probs
+            lp = log_fn(logits_p, flat_r)
+            lr_ref = log_fn(logits_ref, flat_r)
+            mask = torch.arange(L, device=flat_r.device).unsqueeze(0) < flat_l.unsqueeze(1)
+            kl = (torch.exp(lp) * (lp - lr_ref)) * mask
+            kl_div = kl.sum() / mask.sum()
+
         if args.two_layer:
             answers_holder["answers"] = [s["answer"] for s in batch]
             loss, rate = trainer.train_batch(q, r, l, rew, optimizer)
-            if step % 10 == 0:
-                print(
-                    f"Step {step}: loss {loss.item():.4f}, correction rate {rate:.2f}"
-                )
         else:
             loss = trainer.step(q, r, l, rew, optimizer)
-            if step % 10 == 0:
-                print(f"Step {step}: loss {loss.item():.4f}")
+            rate = None
+
+        metrics = {
+            "step": step,
+            "loss": loss.item(),
+            "mean_reward": mean_reward,
+            "kl": kl_div.item(),
+        }
+        if rate is not None:
+            metrics["correction_rate"] = rate
+
+        if step % args.log_interval == 0:
+            msg = (
+                f"Step {step}: loss {metrics['loss']:.4f}, "
+                f"reward {metrics['mean_reward']:.4f}, kl {metrics['kl']:.4f}"
+            )
+            if rate is not None:
+                msg += f", correction rate {rate:.2f}"
+            logging.info(msg)
+            if csv_writer:
+                csv_writer.writerow(metrics)
 
     model.save_pretrained(args.output_dir)
     if args.resume:
         save_checkpoint(model, optimizer, args.steps, args.resume)
+    if csv_writer:
+        csv_file.close()
 
 
 if __name__ == "__main__":
