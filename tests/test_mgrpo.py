@@ -10,6 +10,9 @@ class DummyTokenizer:
     def encode(self, text, add_special_tokens=False):
         return [ord(c) % 10 + 2 for c in text.lower()]
 
+    def decode(self, tokens):
+        return " ".join(str(int(t)) for t in tokens)
+
 class DummyModel(torch.nn.Module):
     def __init__(self, vocab=10):
         super().__init__()
@@ -25,8 +28,9 @@ class DummyModel(torch.nn.Module):
         gen = torch.randint(0, self.linear.out_features, (B, L))
         return torch.cat([inp, gen], dim=1)
 
-def simple_verifier(resp: torch.Tensor) -> bool:
-    return int(resp[-1]) % 2 == 0
+def simple_reward(text: str) -> float:
+    last = int(text.split()[-1])
+    return float(last % 2 == 0)
 
 class GRPOTest(unittest.TestCase):
     def test_single_step(self):
@@ -48,7 +52,7 @@ class GRPOTest(unittest.TestCase):
         trainer = MultiLayerGRPOTrainer(
             model,
             ref,
-            simple_verifier,
+            simple_reward,
             tok,
             guiding_prompt="fix",
         )

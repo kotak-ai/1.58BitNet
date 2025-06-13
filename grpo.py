@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Tuple
+from typing import List, Tuple, Callable
 
 import copy
 from grpo_data import construct_second_pass_input
@@ -64,13 +64,21 @@ class GRPOTrainer:
         return loss.detach()
 
 class MultiLayerGRPOTrainer:
-    """Two-layer GRPO with self-correction."""
+    """Two-layer GRPO with self-correction.
+
+    Parameters
+    ----------
+    reward_fn : Callable[[str], float]
+        Function used to score corrected responses produced by the second
+        layer.  It receives the decoded response text and returns a scalar
+        reward value.
+    """
 
     def __init__(
         self,
         model: nn.Module,
         ref_model: nn.Module,
-        verifier,
+        reward_fn: Callable[[str], float],
         tokenizer,
         guiding_prompt: str,
         clip_eps: float = 0.2,
@@ -78,7 +86,8 @@ class MultiLayerGRPOTrainer:
     ):
         self.layer1 = GRPOTrainer(model, ref_model, clip_eps, beta)
         self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta)
-        self.verifier = verifier
+        self.reward_fn = reward_fn
+        self.tokenizer = tokenizer
         self.guidance_tokens = torch.tensor(
             tokenizer.encode(guiding_prompt, add_special_tokens=False),
             dtype=torch.long,
@@ -110,7 +119,8 @@ class MultiLayerGRPOTrainer:
                         do_sample=True,
                     )
                 new_resp = gen[0, inp_len:]
-                reward_val = 1.0 if self.verifier(new_resp) else 0.0
+                text = self.tokenizer.decode(new_resp.tolist())
+                reward_val = float(self.reward_fn(text))
                 success += int(reward_val > 0)
                 corrected.append(new_resp)
                 corrected_len.append(new_resp.numel())
