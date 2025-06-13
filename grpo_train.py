@@ -180,14 +180,13 @@ def main():
     if args.two_layer:
         answers_holder = {"answers": []}
 
-        def verifier(resp: torch.Tensor) -> bool:
-            text = tokenizer.decode(resp.tolist())
-            return any(qa_reward(text, a) >= 0.8 for a in answers_holder["answers"])
+        def second_layer_reward(text: str) -> float:
+            return max(qa_reward(text, a) for a in answers_holder["answers"])
 
         trainer = MultiLayerGRPOTrainer(
             model,
             ref_model,
-            verifier,
+            second_layer_reward,
             tokenizer,
             guiding_prompt=args.guiding_prompt,
             clip_eps=args.clip_eps,
