@@ -66,5 +66,55 @@ class GRPOTest(unittest.TestCase):
         self.assertGreaterEqual(rate, 0.0)
         self.assertLessEqual(rate, 1.0)
 
+    def test_generation_and_correction(self):
+        class RecordingModel(DummyModel):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+
+            def generate(self, inp, max_length, do_sample=True):
+                self.calls.append(inp.clone())
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+        )
+
+        # replace step methods to avoid heavy computation and capture rewards
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        captured = {}
+
+        def layer2_step(q, r, l, rewards, opt):
+            captured["rewards"] = rewards.clone()
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+
+        optim = torch.optim.SGD(model.parameters(), lr=0.01)
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        responses = torch.tensor([[[4, 5, 6, 7]]], dtype=torch.long)
+        lengths = torch.tensor([[4]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+
+        loss, rate = trainer.train_batch(queries, responses, lengths, rewards, optim)
+        self.assertIsInstance(loss.item(), float)
+        self.assertEqual(rate, 1.0)
+
+        expected_inp = torch.cat(
+            [trainer.guidance_tokens, queries[0], responses[0, 0]], dim=0
+        )
+        self.assertTrue(torch.equal(model.calls[0][0], expected_inp))
+        self.assertTrue(torch.equal(captured["rewards"], torch.tensor([[1.0]])))
+
 if __name__ == '__main__':
     unittest.main()
