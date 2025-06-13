@@ -81,3 +81,13 @@ def build_grpo_batch(
     reward_tensor = torch.tensor(rewards, dtype=torch.float)
     return queries, resp_tensor, len_tensor, reward_tensor
 
+
+def construct_second_pass_input(
+    query_tokens: torch.Tensor,
+    output_tokens: torch.Tensor,
+    guidance_tokens: torch.Tensor,
+) -> (torch.Tensor, int):
+    """Combine guidance, query, and first-layer output tokens."""
+    combined = torch.cat([guidance_tokens.view(-1), query_tokens.view(-1), output_tokens.view(-1)])
+    return combined, combined.numel()
+

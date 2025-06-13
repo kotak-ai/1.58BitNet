@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from typing import List, Tuple
 
 import copy
+from grpo_data import construct_second_pass_input
 
 class GRPOTrainer:
     """Implements the single-layer Group Relative Policy Optimization algorithm."""
@@ -99,18 +100,16 @@ class MultiLayerGRPOTrainer:
         for b in range(B):
             for g in range(G):
                 resp = responses[b, g, : lengths[b, g]]
-                inp = torch.cat([
-                    self.guidance_tokens,
-                    queries[b],
-                    resp,
-                ])
+                inp, inp_len = construct_second_pass_input(
+                    queries[b], resp, self.guidance_tokens
+                )
                 with torch.no_grad():
                     gen = self.layer2.model.generate(
                         inp.unsqueeze(0),
-                        max_length=inp.size(0) + L,
+                        max_length=inp_len + L,
                         do_sample=True,
                     )
-                new_resp = gen[0, inp.size(0) :]
+                new_resp = gen[0, inp_len:]
                 reward_val = 1.0 if self.verifier(new_resp) else 0.0
                 success += int(reward_val > 0)
                 corrected.append(new_resp)
