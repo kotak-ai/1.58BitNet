@@ -157,7 +157,7 @@ def main():
     if args.csv_log:
         fieldnames = ["step", "loss", "mean_reward", "kl"]
         if args.two_layer:
-            fieldnames.append("correction_rate")
+            fieldnames.append("improvement_rate")
         write_header = not os.path.exists(args.csv_log)
         csv_file = open(args.csv_log, "a", newline="")
         csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -246,7 +246,7 @@ def main():
             "kl": kl_div.item(),
         }
         if rate is not None:
-            metrics["correction_rate"] = rate
+            metrics["improvement_rate"] = rate
 
         if step % args.log_interval == 0:
             msg = (
@@ -254,7 +254,7 @@ def main():
                 f"reward {metrics['mean_reward']:.4f}, kl {metrics['kl']:.4f}"
             )
             if rate is not None:
-                msg += f", correction rate {rate:.2f}"
+                msg += f", improvement rate {rate:.2f}"
             logging.info(msg)
             if csv_writer:
                 csv_writer.writerow(metrics)

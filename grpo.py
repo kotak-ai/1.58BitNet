@@ -97,7 +97,20 @@ class MultiLayerGRPOTrainer:
             pad_id = getattr(tokenizer, "eos_token_id", 0)
         self.pad_id = pad_id
 
-    def train_batch(self, queries: torch.Tensor, responses: torch.Tensor, lengths: torch.Tensor, rewards: torch.Tensor, optimizer: torch.optim.Optimizer) -> Tuple[torch.Tensor, float]:
+    def train_batch(
+        self,
+        queries: torch.Tensor,
+        responses: torch.Tensor,
+        lengths: torch.Tensor,
+        rewards: torch.Tensor,
+        optimizer: torch.optim.Optimizer,
+    ) -> Tuple[torch.Tensor, float]:
+        """Train using two GRPO passes and measure improvement.
+
+        Returns a tuple of the combined loss from both layers and the
+        fraction of responses where the second pass achieved a higher
+        reward than the first.
+        """
         B, G, L = responses.shape
         loss1 = self.layer1.step(queries, responses, lengths, rewards, optimizer)
         # attempt self-correction using the second layer
@@ -121,7 +134,8 @@ class MultiLayerGRPOTrainer:
                 new_resp = gen[0, inp_len:]
                 text = self.tokenizer.decode(new_resp.tolist())
                 reward_val = float(self.reward_fn(text))
-                success += int(reward_val > 0)
+                # count improvement relative to the original reward
+                success += int(reward_val > float(rewards[b, g]))
                 corrected.append(new_resp)
                 corrected_len.append(new_resp.numel())
                 corrected_rewards.append(reward_val)
