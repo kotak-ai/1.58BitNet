@@ -57,11 +57,23 @@ During training candidate answers are generated for each query and scored.  If
 
 Optional features:
 
-- `--config FILE` &ndash; JSON file with argument defaults.
+- `--config FILE` &ndash; JSON file with argument defaults (e.g. `guiding_prompt`).
 - `--two_layer` &ndash; enable the two stage trainer with self-correction.
 - `--csv_log LOG.csv` &ndash; append training metrics to a CSV file.
 - `--resume CKPT` &ndash; resume training from a checkpoint created with
   `save_checkpoint`.
+
+Example `config.json` providing defaults:
+
+```json
+{
+  "lr": 0.0005,
+  "group_size": 4,
+  "guiding_prompt": "Review and correct the answer:"
+}
+```
+`guiding_prompt` can be either the prompt text itself or a path to a file
+containing the text.
 
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path path/to/model \
