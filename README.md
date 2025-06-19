@@ -84,6 +84,14 @@ Example command for GRPO with a reward model:
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model rm.ckpt --output_dir grpo_model
 ```
 
+## Two-Layer Self-Correction
+
+Passing `--two_layer` enables a second GRPO pass that attempts to refine the first answer. The second pass concatenates the query, the prior answer and the text from `--guiding_prompt` before generating the correction.
+
+```bash
+python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model rm.ckpt --output_dir grpo_model --two_layer --guiding_prompt "Review and correct the answer:"
+```
+
 ## Evaluation
 
 `evaluation.py` compares a CE fine‑tuned model to a GRPO model using the same QA
