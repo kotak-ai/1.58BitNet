@@ -83,6 +83,7 @@ class MultiLayerGRPOTrainer:
         guiding_prompt: str,
         clip_eps: float = 0.2,
         beta: float = 0.01,
+        verifier: Callable[[float, float], bool] | None = None,
     ):
         self.layer1 = GRPOTrainer(model, ref_model, clip_eps, beta)
         self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta)
@@ -96,6 +97,7 @@ class MultiLayerGRPOTrainer:
         if pad_id is None:
             pad_id = getattr(tokenizer, "eos_token_id", 0)
         self.pad_id = pad_id
+        self.verifier = verifier
 
     def train_batch(
         self,
@@ -134,8 +136,13 @@ class MultiLayerGRPOTrainer:
                 new_resp = gen[0, inp_len:]
                 text = self.tokenizer.decode(new_resp.tolist())
                 reward_val = float(self.reward_fn(text))
-                # count improvement relative to the original reward
-                success += int(reward_val > float(rewards[b, g]))
+                # count improvement relative to the original reward using verifier
+                base_reward = float(rewards[b, g])
+                if self.verifier is None:
+                    improved = reward_val > base_reward
+                else:
+                    improved = bool(self.verifier(reward_val, base_reward))
+                success += int(improved)
                 corrected.append(new_resp)
                 corrected_len.append(new_resp.numel())
                 corrected_rewards.append(reward_val)

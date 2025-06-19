@@ -148,6 +148,11 @@ def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentP
         if hasattr(args, key) and getattr(args, key) == old_default:
             setattr(args, key, value)
 
+
+def simple_improvement_verifier(new_reward: float, old_reward: float, threshold: float = 0.05) -> bool:
+    """Return True if ``new_reward`` exceeds ``old_reward`` by ``threshold``."""
+    return (new_reward - old_reward) > threshold
+
 def main():
     parser = get_arg_parser()
     args = parser.parse_args()
@@ -196,6 +201,7 @@ def main():
             guiding_prompt=args.guiding_prompt,
             clip_eps=args.clip_eps,
             beta=args.beta,
+            verifier=simple_improvement_verifier,
         )
     else:
         trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
