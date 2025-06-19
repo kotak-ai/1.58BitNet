@@ -137,6 +137,11 @@ def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentP
         return
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = json.load(f)
+    if "guiding_prompt" in cfg:
+        gp = cfg["guiding_prompt"]
+        if isinstance(gp, str) and os.path.isfile(gp):
+            with open(gp, "r", encoding="utf-8") as pf:
+                cfg["guiding_prompt"] = pf.read().strip()
     for key, value in cfg.items():
         old_default = parser.get_default(key)
         parser.set_defaults(**{key: value})

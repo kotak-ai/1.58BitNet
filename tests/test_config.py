@@ -20,5 +20,15 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(args.group_size, 4)
         self.assertEqual(args.guiding_prompt, "check")
 
+    def test_guiding_prompt_file(self):
+        parser = get_arg_parser()
+        with open("prompt.txt", "w", encoding="utf-8") as f:
+            f.write("file prompt")
+        cfg = {"guiding_prompt": "prompt.txt"}
+        with open("tmp_cfg2.json", "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+        args = parser.parse_args(["--dataset", "d.json", "--model_path", "m", "--config", "tmp_cfg2.json"])
+        update_args_with_config(args, parser)
+        self.assertEqual(args.guiding_prompt, "file prompt")
 if __name__ == "__main__":
     unittest.main()
