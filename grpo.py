@@ -118,6 +118,8 @@ class MultiLayerGRPOTrainer:
         """
         B, G, L = responses.shape
         loss1 = self.layer1.step(queries, responses, lengths, rewards, optimizer)
+        # ensure the second layer uses the updated policy from the first step
+        self.layer2.old_model.load_state_dict(self.layer2.model.state_dict())
         # attempt self-correction using the second layer
         corrected = []
         corrected_len = []

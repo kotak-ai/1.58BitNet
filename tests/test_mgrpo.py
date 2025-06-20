@@ -142,5 +142,39 @@ class GRPOTest(unittest.TestCase):
         )
         self.assertEqual(len(texts), 2)
 
+    def test_layer2_old_model_updated(self):
+        model = DummyModel()
+        ref = DummyModel()
+        tok = DummyTokenizer()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+        )
+        optim = torch.optim.SGD(model.parameters(), lr=0.01)
+        queries = torch.randint(0, 10, (1, 3))
+        responses = torch.randint(0, 10, (1, 2, 4))
+        lengths = torch.tensor([[4, 4]])
+        rewards = torch.tensor([[0.0, 1.0]])
+
+        init_params = [p.clone() for p in model.parameters()]
+        called = {"ok": False}
+
+        def layer2_step(q, r, l, rew, opt):
+            for p1, p2 in zip(trainer.layer2.model.parameters(), trainer.layer2.old_model.parameters()):
+                self.assertTrue(torch.allclose(p1, p2))
+            called["ok"] = True
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+        trainer.train_batch(queries, responses, lengths, rewards, optim)
+        self.assertTrue(called["ok"])
+        changed = any(
+            not torch.allclose(p, q) for p, q in zip(model.parameters(), init_params)
+        )
+        self.assertTrue(changed)
+
 if __name__ == '__main__':
     unittest.main()
