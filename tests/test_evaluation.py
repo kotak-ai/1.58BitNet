@@ -24,6 +24,18 @@ class DummyModel(torch.nn.Module):
         out_tok = [self.mapping.get(token, 4)]
         return torch.tensor([inp[0].tolist() + out_tok])
 
+class RecordingModel(torch.nn.Module):
+    def __init__(self, first_token, second_token):
+        super().__init__()
+        self.first_token = first_token
+        self.second_token = second_token
+        self.calls = []
+
+    def generate(self, inp, max_length, do_sample=False):
+        self.calls.append(inp.clone())
+        token = self.first_token if len(self.calls) == 1 else self.second_token
+        return torch.cat([inp, torch.tensor([[token]])], dim=1)
+
 class EvalTest(unittest.TestCase):
     def test_compare(self):
         data = [{'query':'a','answer':'x'}, {'query':'b','answer':'y'}]
@@ -33,6 +45,24 @@ class EvalTest(unittest.TestCase):
         ce_score = evaluate_model(ce_model, tok, data, 1)
         grpo_score = evaluate_model(grpo_model, tok, data, 1)
         self.assertLess(ce_score, grpo_score)
+
+    def test_two_layer(self):
+        data = [{"query": "a", "answer": "y"}]
+        tok = DummyTokenizer()
+        model = RecordingModel(4, 5)
+        score = evaluate_model(
+            model,
+            tok,
+            data,
+            1,
+            two_layer=True,
+            guiding_prompt="a",
+            second_max_length=1,
+        )
+        self.assertAlmostEqual(score, 1.0)
+        expected = torch.tensor([[2, 4, 1, 2]], dtype=torch.long)
+        self.assertEqual(len(model.calls), 2)
+        self.assertTrue(torch.equal(model.calls[1], expected))
 
 if __name__ == '__main__':
     unittest.main()
