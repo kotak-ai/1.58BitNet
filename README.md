@@ -23,13 +23,13 @@ gigabytes of RAM.
 
 ## Creating a Model
 
-Use `new-model-architecture-creation.py` to generate a blank ternary model.  The
-script asks for the desired parameter count and writes the model to a directory
-named `llama_<params>_ternary_quantized_optimized`.  Passing `--e` enables an
-experimental quantisation mode.
+Use `new-model-architecture-creation.py` to generate a blank ternary model.
+Specify the desired parameter count on the command line. The model is written
+to `--output_dir` if provided, otherwise `llama_<params>_ternary_quantized_optimized`.
+Passing `--e` enables an experimental quantisation mode.
 
 ```bash
-python new-model-architecture-creation.py
+python new-model-architecture-creation.py --params 750M --output_dir llama_750M
 ```
 
 ## Cross‑Entropy Training

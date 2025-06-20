@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from transformers import LlamaConfig
-from quantization_utils import activation_quant, weight_quant
+from quantization_utils import activation_quant, quantize_tensor_1_58bit
 from llama_model import LlamaModel, BitLinear
 from tqdm import tqdm
 import os
@@ -10,7 +10,9 @@ import re
 import argparse
 
 # Add argument parser
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(description="Create a blank 1.58-bit quantised LLaMA model")
+parser.add_argument("--params", required=True, help="Total parameter count, e.g. 750M or 1.5B")
+parser.add_argument("--output_dir", default=None, help="Directory to save the model")
 parser.add_argument("--e", action="store_true", help="Enable experimental quantization")
 args = parser.parse_args()
 
@@ -98,9 +100,8 @@ def parse_num_params(input_str):
         num_params = int(input_str)
     return int(num_params)
 
-# User input for the desired number of parameters
-input_str = input("Enter the desired number of parameters (e.g., 300M, 1.5B): ")
-num_params = parse_num_params(input_str)
+# Parse parameter count from command line
+num_params = parse_num_params(args.params)
 assert 300_000_000 <= num_params <= 200_000_000_000, "Number of parameters must be between 300M and 200B"
 
 # Calculate the model dimensions based on the desired number of parameters
@@ -111,10 +112,11 @@ model = LlamaModel(config, experiment=args.e)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 model.to(device)
 
-# Ternarize the model weights
+# Ternarize the model weights using 1.58‑bit quantisation
 for name, module in model.named_modules():
     if isinstance(module, BitLinear):
-        module.weight = nn.Parameter(weight_quant(module.weight))
+        q, scale = quantize_tensor_1_58bit(module.weight)
+        module.weight = nn.Parameter(q.float() * scale)
 
 # Quantize activations to 8 bits
 def quantize_activations(model):
@@ -156,7 +158,7 @@ model_size = calculate_model_size(model)
 print(f"Model size: {model_size / (1024 * 1024):.2f} MB")
 
 print("Saving ternarized and quantized model...")
-save_dir = f"llama_{num_params}_ternary_quantized_optimized"
+save_dir = args.output_dir or f"llama_{num_params}_ternary_quantized_optimized"
 os.makedirs(save_dir, exist_ok=True)
 model.save_pretrained(save_dir)
 
