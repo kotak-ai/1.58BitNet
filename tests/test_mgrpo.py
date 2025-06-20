@@ -113,7 +113,13 @@ class GRPOTest(unittest.TestCase):
         self.assertEqual(rate, 1.0)
 
         expected_inp = torch.cat(
-            [trainer.guidance_tokens, queries[0], responses[0, 0]], dim=0
+            [
+                queries[0],
+                responses[0, 0],
+                torch.tensor([trainer.sep_id], dtype=torch.long),
+                trainer.guidance_tokens,
+            ],
+            dim=0,
         )
         self.assertTrue(torch.equal(model.calls[0][0], expected_inp))
         self.assertTrue(torch.equal(captured["rewards"], torch.tensor([[1.0]])))

@@ -94,6 +94,10 @@ class MultiLayerGRPOTrainer:
             tokenizer.encode(guiding_prompt, add_special_tokens=False),
             dtype=torch.long,
         )
+        sep = getattr(tokenizer, "sep_token_id", None)
+        if sep is None:
+            sep = getattr(tokenizer, "eos_token_id", 0)
+        self.sep_id = int(sep)
         pad_id = getattr(tokenizer, "pad_token_id", None)
         if pad_id is None:
             pad_id = getattr(tokenizer, "eos_token_id", 0)
@@ -133,7 +137,10 @@ class MultiLayerGRPOTrainer:
             for g in range(G):
                 resp = responses[b, g, : lengths[b, g]]
                 inp, inp_len = construct_second_pass_input(
-                    q_tokens, resp, self.guidance_tokens
+                    q_tokens,
+                    resp,
+                    self.guidance_tokens,
+                    self.sep_id,
                 )
                 with torch.no_grad():
                     gen = self.layer2.model.generate(
