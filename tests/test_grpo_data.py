@@ -24,10 +24,11 @@ class GRPODataTest(unittest.TestCase):
         data = [{'query': 'hi', 'answer': 'hello'}]
         tok = DummyTokenizer()
         model = DummyModel()
-        q, r, l, rew = build_grpo_batch(
+        q, ql, r, l, rew = build_grpo_batch(
             data, tok, model, group_size=2, max_length=3, reward_fn=f1_reward
         )
         self.assertEqual(q.size(0), 1)
+        self.assertEqual(ql.shape, (1,))
         self.assertEqual(r.shape[:2], (1,2))
         self.assertEqual(l.shape, (1,2))
         self.assertEqual(rew.shape, (1,2))

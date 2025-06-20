@@ -49,7 +49,7 @@ def prepare_batch(samples, tokenizer, model, group_size, max_length, reward_fn=f
     q_tokens = [tokenizer.encode(s['query'], add_special_tokens=False) for s in samples]
     answers = [s['answer'] for s in samples]
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
-    queries, _ = pad_sequences(q_tokens, pad_id)
+    queries, q_lens = pad_sequences(q_tokens, pad_id)
 
     B = len(samples)
     responses = []
@@ -81,7 +81,7 @@ def prepare_batch(samples, tokenizer, model, group_size, max_length, reward_fn=f
             resp_tensor[b, g, :len(seq)] = torch.tensor(seq, dtype=torch.long)
             len_tensor[b, g] = len(seq)
     reward_tensor = torch.tensor(rewards, dtype=torch.float)
-    return queries, resp_tensor, len_tensor, reward_tensor
+    return queries, q_lens, resp_tensor, len_tensor, reward_tensor
 
 
 def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int, path: str) -> None:
@@ -231,7 +231,7 @@ def main():
 
     for step in iterator:
         batch = random.sample(dataset, args.batch_size)
-        q, r, l, rew = build_grpo_batch(
+        q, ql, r, l, rew = build_grpo_batch(
             batch,
             tokenizer,
             model,
@@ -261,7 +261,7 @@ def main():
         if args.two_layer:
             answers_holder["answers"] = [s["answer"] for s in batch]
             log_n = NUM_LOG_TEXT if csv_writer else 0
-            res = trainer.train_batch(q, r, l, rew, optimizer, log_texts=log_n)
+            res = trainer.train_batch(q, ql, r, l, rew, optimizer, log_texts=log_n)
             if log_n:
                 loss, rate, corrected_texts = res
             else:

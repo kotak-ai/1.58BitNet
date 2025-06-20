@@ -104,6 +104,7 @@ class MultiLayerGRPOTrainer:
     def train_batch(
         self,
         queries: torch.Tensor,
+        query_lengths: torch.Tensor,
         responses: torch.Tensor,
         lengths: torch.Tensor,
         rewards: torch.Tensor,
@@ -128,10 +129,11 @@ class MultiLayerGRPOTrainer:
         log_text_list: list[str] = []
         success = 0
         for b in range(B):
+            q_tokens = queries[b, : query_lengths[b]]
             for g in range(G):
                 resp = responses[b, g, : lengths[b, g]]
                 inp, inp_len = construct_second_pass_input(
-                    queries[b], resp, self.guidance_tokens
+                    q_tokens, resp, self.guidance_tokens
                 )
                 with torch.no_grad():
                     gen = self.layer2.model.generate(

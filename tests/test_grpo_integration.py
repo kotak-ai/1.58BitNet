@@ -50,6 +50,7 @@ class GRPOIntegrationTest(unittest.TestCase):
         a_tokens = [tok.encode(d["answer"]) for d in data]
         pad_id = tok.pad_token_id
         queries = pad_sequences(q_tokens, pad_id)
+        q_lens = torch.tensor([len(q) for q in q_tokens], dtype=torch.long)
         max_resp = max(len(a) for a in a_tokens)
         B, G = len(data), 2
         responses = torch.full((B, G, max_resp), pad_id, dtype=torch.long)
@@ -86,6 +87,7 @@ class GRPOIntegrationTest(unittest.TestCase):
         a_tokens = [tok.encode(d["answer"]) for d in data]
         pad_id = tok.pad_token_id
         queries = pad_sequences(q_tokens, pad_id)
+        q_lens = torch.tensor([len(q) for q in q_tokens], dtype=torch.long)
         max_resp = max(len(a) for a in a_tokens)
         B, G = len(data), 2
         responses = torch.full((B, G, max_resp), pad_id, dtype=torch.long)
@@ -107,7 +109,7 @@ class GRPOIntegrationTest(unittest.TestCase):
         init_params = [p.clone() for p in model.parameters()]
         rates = []
         for _ in range(3):
-            _, rate = trainer.train_batch(queries, responses, lengths, rewards, optim)
+            _, rate = trainer.train_batch(queries, q_lens, responses, lengths, rewards, optim)
             rates.append(rate)
         changed = any(not torch.allclose(p, q) for p, q in zip(model.parameters(), init_params))
         self.assertTrue(changed)
