@@ -32,6 +32,15 @@ Passing `--e` enables an experimental quantisation mode.
 python new-model-architecture-creation.py --params 750M --output_dir llama_750M
 ```
 
+## Quantized Model Format
+
+`LlamaModel.save_pretrained` writes quantised weights to `model.safetensors`.
+Each tensor from the model `state_dict` is saved with a `model.` prefix and a
+matching `<name>.shape` entry holding the original dimensions.  The accompanying
+`model.safetensors.index.json` lists the tensor names and includes a
+`metadata.total_size` field giving the total byte size.  Config and tokenizer
+files are stored alongside these.
+
 ## Cross‑Entropy Training
 
 `trainingv2.py` performs standard CE training on tokenised text datasets.  The

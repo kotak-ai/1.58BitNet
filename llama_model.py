@@ -314,28 +314,11 @@ class LlamaModel(nn.Module):
     def load_pretrained(cls, model_path):
         if LlamaConfig is None:
             raise ImportError("transformers is required to load pretrained models")
-        if load_file is None:
-            raise ImportError("safetensors is required to load pretrained models")
-        # Load the model configuration
+        from quantized_model_io import load_quantized_model
+
         config = LlamaConfig.from_pretrained(model_path)
-
-        # Create a new model instance with the loaded configuration
         model = cls(config)
-
-        # Load the state dict from the model.safetensors file
-        state_dict = load_file(os.path.join(model_path, "model.safetensors"))
-
-        adjusted_state_dict = {}
-        for key, value in state_dict.items():
-            if key.endswith(".shape"):
-                continue
-            shape_key = key + ".shape"
-            if shape_key in state_dict:
-                value = unpack_quantized_tensor(value, state_dict[shape_key])
-            adjusted_state_dict[key.replace("model.", "")] = value
-
-        model.load_state_dict(adjusted_state_dict)
-
+        load_quantized_model(model, model_path)
         return model
 
     def forward(self, input_ids, attention_mask, **kwargs):
@@ -363,8 +346,7 @@ class LlamaModel(nn.Module):
     def save_pretrained(self, save_directory):
         if AutoTokenizer is None:
             raise ImportError("transformers is required to save pretrained models")
-        if save_file is None:
-            raise ImportError("safetensors is required to save pretrained models")
+        from quantized_model_io import save_quantized_model
         # Update the model configuration with the quantized model's parameters
         self.config.hidden_size = self.embed_tokens.embedding_dim
         self.config.num_attention_heads = self.config.hidden_size // self.layers[0].self_attn.head_dim
@@ -427,38 +409,7 @@ class LlamaModel(nn.Module):
             if os.path.isfile(src_path):
                 shutil.copyfile(src_path, dst_path)
 
-        state_dict = self.state_dict()
-        quantized_state_dict = {}
-        total_size = 0
-        weight_map = {}
-
-        for name, param in state_dict.items():
-            if isinstance(param, torch.Tensor):
-                print(f"Before quantization: {name} - Size: {param.numel() * param.element_size()} bytes")
-
-                adjusted_name = f"model.{name}"
-
-                quantized_param = quantize_tensor(param)
-                packed, shape = pack_quantized_tensor(quantized_param)
-
-                quantized_state_dict[adjusted_name] = packed
-                quantized_state_dict[adjusted_name + ".shape"] = shape
-
-                quantized_size = packed.numel() * packed.element_size() + shape.numel() * shape.element_size()
-                total_size += quantized_size
-                print(f"After quantization: {adjusted_name} - Size: {quantized_size} bytes")
-                weight_map["model." + name] = "model.safetensors"
-                weight_map["model." + name + ".shape"] = "model.safetensors"
-
-        index_data = {
-            "metadata": {"total_size": total_size},
-            "weight_map": weight_map,
-        }
-
-        with open(os.path.join(save_directory, "model.safetensors.index.json"), "w") as f:
-            json.dump(index_data, f, indent=2)
-
-        save_file(quantized_state_dict, os.path.join(save_directory, "model.safetensors"))
+        save_quantized_model(self, save_directory)
 
     def save_sharded_safetensors(self, output_path, shard_size=9*1024*1024*1024):
         if save_file is None:

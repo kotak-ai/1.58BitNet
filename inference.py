@@ -1,16 +1,12 @@
 import argparse
 import torch
 import torch.nn as nn
-from transformers import LlamaConfig, AutoTokenizer
-from transformers.models.llama.modeling_llama import LlamaModel
+from transformers import AutoTokenizer
 from transformers.activations import ACT2FN
 from llama_model import LlamaModel
 from quantization_utils import activation_norm_quant, gemm_lowbit
-from safetensors.torch import load
 import time
 import psutil
-import json
-import os
 
 ACT2FN["llamamlp"] = lambda x: x * torch.sigmoid(x)
 
@@ -29,41 +25,13 @@ class BitLinear(nn.Linear):
 
 def load_quantized_model(model_path):
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    config = LlamaConfig.from_pretrained(model_path)
-
-    # Correctly reading the .safetensors file in binary mode
-    model_state_dict_path = os.path.join(model_path, "model.safetensors")
-    with open(model_state_dict_path, "rb") as f:
-        model_state_dict_bytes = f.read()
-
-    # Load the state dictionary from the bytes
-    model_state_dict = load(model_state_dict_bytes)
-
-    # Remove the "model." prefix from the state dictionary keys
-    model_state_dict = {k.replace("model.", ""): v for k, v in model_state_dict.items()}
-
-    # Create a new model instance with the loaded config
-    model = LlamaModel(config)
-
-    # Load the state dictionary into the model
-    model.load_state_dict(model_state_dict)
-
-    # Quantize the model weights offline to 1.58 bits
-    for name, module in model.named_modules():
-        if isinstance(module, BitLinear):
-            module.weight_scale = module.weight.abs().mean().clamp_(min=1e-5)
-            module.weight = ((module.weight * module.weight_scale).round().clamp_(-1, 1) / module.weight_scale).to(torch.int8)
-
-    # Move the model to the appropriate device
+    model = LlamaModel.load_pretrained(model_path)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model.to(device)
-
-    # Set the pad_token_id and eos_token_id in the tokenizer
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     if tokenizer.eos_token_id is None:
         tokenizer.eos_token_id = tokenizer.pad_token_id
-
     return model, tokenizer
 
 def generate_text(model, tokenizer, prompt, max_length=100):

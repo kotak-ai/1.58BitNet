@@ -52,10 +52,15 @@ class PackUtilsTest(unittest.TestCase):
             orig_Tokenizer = llama_model.AutoTokenizer
             orig_save_file = llama_model.save_file
             orig_load_file = llama_model.load_file
+            import quantized_model_io as qio
+            orig_qsave = qio.save_file
+            orig_qload = qio.load_file
             llama_model.LlamaConfig = DummyConfig
             llama_model.AutoTokenizer = DummyTokenizer
             llama_model.save_file = torch.save
             llama_model.load_file = torch.load
+            qio.save_file = torch.save
+            qio.load_file = torch.load
 
             config = DummyConfig()
             model = llama_model.LlamaModel(config)
@@ -70,6 +75,8 @@ class PackUtilsTest(unittest.TestCase):
             llama_model.AutoTokenizer = orig_Tokenizer
             llama_model.save_file = orig_save_file
             llama_model.load_file = orig_load_file
+            qio.save_file = orig_qsave
+            qio.load_file = orig_qload
 
 if __name__ == '__main__':
     unittest.main()
