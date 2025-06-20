@@ -7,6 +7,7 @@ TRANS_AVAILABLE = importlib.util.find_spec("transformers") is not None
 if TRANS_AVAILABLE:
     import inference
     import data_loading_compatibility as dlc
+    import evaluation
 
 
 @unittest.skipUnless(TRANS_AVAILABLE, "transformers not available")
@@ -23,6 +24,27 @@ class DataLoadingCLITest(unittest.TestCase):
         with mock.patch('data_loading_compatibility.run') as run:
             dlc.main(['--model_path', 'm', '--text', 'hi'])
             run.assert_called_with('m', 'hi', max_length=100)
+
+
+@unittest.skipUnless(TRANS_AVAILABLE, "transformers not available")
+class EvaluationCLITest(unittest.TestCase):
+    def test_main_calls_run(self):
+        with mock.patch('evaluation.run') as run:
+            evaluation.main([
+                '--dataset', 'd.json',
+                '--ce_model', 'ce',
+                '--grpo_model', 'grpo',
+            ])
+            run.assert_called_with(
+                'd.json',
+                'ce',
+                'grpo',
+                max_length=20,
+                task='qa',
+                two_layer=False,
+                guiding_prompt='Review and correct the answer:',
+                second_max_length=20,
+            )
 
 
 if __name__ == '__main__':
