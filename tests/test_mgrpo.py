@@ -187,5 +187,105 @@ class GRPOTest(unittest.TestCase):
         )
         self.assertTrue(changed)
 
+    def test_verifier_allows_improvement(self):
+        class RecordingModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 3, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+
+        def reward_fn(text: str) -> float:
+            last = int(text.split()[-1])
+            return float(last) / 10.0
+
+        def verifier(new: float, old: float) -> bool:
+            return (new - old) > 0.15
+
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            reward_fn,
+            tok,
+            guiding_prompt="fix",
+            verifier=verifier,
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        captured = {}
+
+        def layer2_step(q, r, l, rewards, opt):
+            captured["rewards"] = rewards.clone()
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.1]], dtype=torch.float)
+
+        _, rate = trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        self.assertEqual(rate, 1.0)
+        self.assertTrue(torch.allclose(captured["rewards"], torch.tensor([[0.3]])))
+
+    def test_deterministic_corrections(self):
+        class RecordingModel(DummyModel):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+
+            def generate(self, inp, max_length, do_sample=True):
+                self.calls.append(inp.clone())
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.randint(0, self.linear.out_features, (B, L))
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="guide",
+            second_max_length=2,
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        captured = {}
+
+        def layer2_step(q, r, l, rewards, opt):
+            captured["tokens"] = r.clone()
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        torch.manual_seed(42)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        first = captured["tokens"].clone()
+
+        torch.manual_seed(42)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        second = captured["tokens"].clone()
+
+        self.assertTrue(torch.equal(first, second))
+        self.assertEqual(first.size(-1), trainer.second_max_length)
+
 if __name__ == '__main__':
     unittest.main()
