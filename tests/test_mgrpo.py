@@ -116,5 +116,31 @@ class GRPOTest(unittest.TestCase):
         self.assertTrue(torch.equal(model.calls[0][0], expected_inp))
         self.assertTrue(torch.equal(captured["rewards"], torch.tensor([[1.0]])))
 
+    def test_log_texts(self):
+        model = DummyModel()
+        ref = DummyModel()
+        tok = DummyTokenizer()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+        )
+        optim = torch.optim.SGD(model.parameters(), lr=0.01)
+        queries = torch.randint(0, 10, (1, 3))
+        responses = torch.randint(0, 10, (1, 2, 4))
+        lengths = torch.tensor([[4, 4]])
+        rewards = torch.tensor([[0.0, 1.0]])
+        loss, rate, texts = trainer.train_batch(
+            queries,
+            responses,
+            lengths,
+            rewards,
+            optim,
+            log_texts=2,
+        )
+        self.assertEqual(len(texts), 2)
+
 if __name__ == '__main__':
     unittest.main()

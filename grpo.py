@@ -106,7 +106,8 @@ class MultiLayerGRPOTrainer:
         lengths: torch.Tensor,
         rewards: torch.Tensor,
         optimizer: torch.optim.Optimizer,
-    ) -> Tuple[torch.Tensor, float]:
+        log_texts: int = 0,
+    ) -> Tuple[torch.Tensor, float] | Tuple[torch.Tensor, float, list[str]]:
         """Train using two GRPO passes and measure improvement.
 
         Returns a tuple of the combined loss from both layers and the
@@ -120,6 +121,7 @@ class MultiLayerGRPOTrainer:
         corrected_len = []
         corrected_rewards = []
         corrected_queries = []
+        log_text_list: list[str] = []
         success = 0
         for b in range(B):
             for g in range(G):
@@ -147,7 +149,11 @@ class MultiLayerGRPOTrainer:
                 corrected_len.append(new_resp.numel())
                 corrected_rewards.append(reward_val)
                 corrected_queries.append(queries[b])
+                if len(log_text_list) < log_texts:
+                    log_text_list.append(text)
         if not corrected:
+            if log_texts:
+                return loss1, 0.0, log_text_list
             return loss1, 0.0
         max_len = max(corrected_len)
         corr_tensor = torch.full(
@@ -159,4 +165,6 @@ class MultiLayerGRPOTrainer:
         corr_rewards = torch.tensor(corrected_rewards, dtype=torch.float).unsqueeze(1)
         corr_queries = torch.stack(corrected_queries)
         loss2 = self.layer2.step(corr_queries, corr_tensor, corr_len, corr_rewards, optimizer)
+        if log_texts:
+            return loss1 + loss2, float(success) / (B * G), log_text_list
         return loss1 + loss2, float(success) / (B * G)
