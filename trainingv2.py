@@ -6,6 +6,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, LlamaConfig
 from safetensors.torch import load_file
 from llama_model import LlamaModel
+from training_utils import save_checkpoint, load_checkpoint, cosine_lr_wd
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import argparse
@@ -131,9 +132,13 @@ def evaluate(model, dataset, loss_fn, tokenizer, batch_size, num_batches, max_le
 
     return np.sum(all_losses) / ntokens
 
-def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iters, val_batches, steps_per_report, steps_per_eval, max_length, grad_accum_steps):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iters, val_batches, steps_per_report, steps_per_eval, max_length, grad_accum_steps, weight_decay=0.1, resume=None, save_interval=0):
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     print("Learning rate:", optimizer.param_groups[0]['lr'])
+    start_step = 0
+    if resume and os.path.exists(resume):
+        start_step = load_checkpoint(model, optimizer, resume)
+        print(f"Resumed from step {start_step}")
     trainable_params = sum(v.numel() for _, v in model.named_parameters() if v.requires_grad) / 10**6
     total_params = sum(v.numel() for _, v in model.named_parameters()) / 10**6
     print(f"Total parameters: {total_params:.3f}M")
@@ -144,23 +149,9 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
 
     torch.autograd.set_detect_anomaly(True)
 
-    # Define the learning rate scheduler
-    def lr_scheduler(step):
-        if step < iters // 2:
-            return learning_rate
-        else:
-            return learning_rate * 0.1
-
-    # Define the weight decay scheduler
-    def wd_scheduler(step):
-        if step < iters // 2:
-            return 0.1
-        else:
-            return 0.0
-
-    step = 0
-    while step < iters:
-        for batch_idx, batch in enumerate(tqdm(iterate_batches(dataset, tokenizer, batch_size, train=True, max_length=max_length), desc=f"Iteration {step // steps_per_eval + 1}")):
+    current_step = start_step
+    while current_step < iters:
+        for batch_idx, batch in enumerate(tqdm(iterate_batches(dataset, tokenizer, batch_size, train=True, max_length=max_length), desc=f"Iteration {current_step // steps_per_eval + 1}")):
             batch = tuple(t.to(device) for t in batch)
             loss_value, ntoks = loss(model, *batch)
             loss_value = loss_value / grad_accum_steps
@@ -171,27 +162,29 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
                 optimizer.step()
                 optimizer.zero_grad()
 
-                # Update the learning rate and weight decay
-                lr = lr_scheduler(step)
-                wd = wd_scheduler(step)
+                lr, wd = cosine_lr_wd(current_step, iters, learning_rate, weight_decay)
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = lr
                     param_group['weight_decay'] = wd
 
-            if step % steps_per_report == 0:
-                print(f"Step {step}: Loss = {loss_value.item():.4f}")
+            if current_step % steps_per_report == 0:
+                print(f"Step {current_step}: Loss = {loss_value.item():.4f}")
 
-            if step % steps_per_eval == 0:
+            if current_step % steps_per_eval == 0:
                 cos = torch.zeros(max_length, model.config.hidden_size // model.config.num_attention_heads, device=device)
                 sin = torch.zeros(max_length, model.config.hidden_size // model.config.num_attention_heads, device=device)
                 val_loss = evaluate(model, dataset, loss, tokenizer, batch_size, val_batches, max_length, device)
-                print(f"Validation Loss at Step {step}: {val_loss:.4f}")
+                print(f"Validation Loss at Step {current_step}: {val_loss:.4f}")
                 model.train()
 
-            step += 1
-            if step >= iters:
+            current_step += 1
+            if save_interval and resume and current_step % save_interval == 0:
+                save_checkpoint(model, optimizer, current_step, resume)
+            if current_step >= iters:
                 break
 
+    if resume:
+        save_checkpoint(model, optimizer, iters, resume)
     return model
 
 if __name__ == "__main__":
@@ -201,6 +194,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training.")
     parser.add_argument("--num_epochs", type=int, default=3, help="Number of training epochs.")
     parser.add_argument("--learning_rate", type=float, default=1e-5, help="Learning rate for the optimizer.")
+    parser.add_argument("--weight_decay", type=float, default=0.1, help="Base weight decay")
     parser.add_argument("--output_dir", type=str, default="fine_tuned_model", help="Output directory to save the fine-tuned model.")
     parser.add_argument("--iters", type=int, default=1000, help="Steps to train for.")
     parser.add_argument("--val_batches", type=int, default=25, help="Number of validation batches, -1 uses the entire validation set.")
@@ -208,6 +202,8 @@ if __name__ == "__main__":
     parser.add_argument("--steps_per_eval", type=int, default=20, help="Number of training steps between validations.")
     parser.add_argument("--max_length", type=int, default=8192, help="Maximum sequence length for input tokens.")
     parser.add_argument("--grad_accum_steps", type=int, default=1, help="Number of steps for gradient accumulation.")
+    parser.add_argument("--resume", type=str, default=None, help="Checkpoint to resume from")
+    parser.add_argument("--save_interval", type=int, default=0, help="Steps between checkpoint saves")
 
     args = parser.parse_args()
 
@@ -230,5 +226,21 @@ if __name__ == "__main__":
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    model = train(model, tokenizer, dataset, args.batch_size, args.num_epochs, args.learning_rate, args.iters, args.val_batches, args.steps_per_report, args.steps_per_eval, args.max_length, args.grad_accum_steps)
+    model = train(
+        model,
+        tokenizer,
+        dataset,
+        args.batch_size,
+        args.num_epochs,
+        args.learning_rate,
+        args.iters,
+        args.val_batches,
+        args.steps_per_report,
+        args.steps_per_eval,
+        args.max_length,
+        args.grad_accum_steps,
+        weight_decay=args.weight_decay,
+        resume=args.resume,
+        save_interval=args.save_interval,
+    )
     model.save_pretrained(args.output_dir)

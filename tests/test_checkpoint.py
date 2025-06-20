@@ -1,7 +1,7 @@
 import os
 import torch
 import unittest
-from grpo_train import save_checkpoint, load_checkpoint
+from training_utils import save_checkpoint, load_checkpoint
 
 class DummyModel(torch.nn.Module):
     def __init__(self):
