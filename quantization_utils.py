@@ -32,68 +32,45 @@ def act_quant_4bit(x):
     y = (x * scale).round().clamp_(-8, 7)
     return y
 
-def gemm_lowbit_kernel_mps(x, w):
-    # Ensure the tensors are on the MPS device
-    x = x.to(device='mps')
-    w = w.to(device='mps')
+class _LowBitMatMul(torch.autograd.Function):
+    """Low-bit matrix multiply supporting CPU, CUDA and MPS."""
 
-    # Extract the dimensions
-    batch_size, input_size = x.shape
-    output_size, _ = w.shape
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(x, w)
 
-    # Create a custom Metal kernel for low-bit matrix multiplication
-    kernel = '''
-        #include <metal_stdlib>
-        using namespace metal;
+        # Perform integer GEMM on all devices.  PyTorch supports int32 matmul on
+        # CPU and CUDA.  On MPS fall back to float computation after casting.
+        if x.device.type == "mps":
+            out = (x.to(torch.int32) @ w.to(torch.int32).t()).to(torch.float32)
+        else:
+            out = (x.to(torch.int32) @ w.to(torch.int32).t()).to(torch.float32)
 
-        kernel void gemm_lowbit(device char* x_ptr   [[buffer(0)]],
-                                device char* w_ptr   [[buffer(1)]],
-                                device float* out_ptr [[buffer(2)]],
-                                uint batch_size      [[buffer(3)]],
-                                uint input_size      [[buffer(4)]],
-                                uint output_size     [[buffer(5)]]) {
-            uint idx = threadgroup_position_in_grid.x;
-            if (idx >= batch_size * output_size) {
-                return;
-            }
+        return out
 
-            uint row = idx / output_size;
-            uint col = idx % output_size;
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, w = ctx.saved_tensors
+        grad_x = grad_w = None
 
-            int32_t acc = 0;
-            for (uint i = 0; i < input_size; ++i) {
-                int8_t x_val = x_ptr[row * input_size + i];
-                int8_t w_val = w_ptr[col * input_size + i];
-                acc += static_cast<int32_t>(x_val) * static_cast<int32_t>(w_val);
-            }
+        if ctx.needs_input_grad[0]:
+            grad_x = grad_output @ w.to(torch.float32)
+        if ctx.needs_input_grad[1]:
+            grad_w = grad_output.t() @ x.to(torch.float32)
 
-            out_ptr[idx] = static_cast<float>(acc);
-        }
-    '''
+        return grad_x, grad_w
 
-    # Compile the Metal kernel
-    device = torch.device('mps')
-    kernel_func = torch.jit.CompilationUnit().create_kernel(kernel, 'gemm_lowbit')
 
-    # Allocate output tensor on the MPS device
-    out = torch.empty(batch_size, output_size, dtype=torch.float32, device=device)
+def gemm_lowbit(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+    """Matrix multiply for int8 tensors with float32 accumulation.
 
-    # Convert input tensors to int8
-    x_int8 = x.to(dtype=torch.int8)
-    w_int8 = w.to(dtype=torch.int8)
+    This function works on CPU, CUDA and MPS by dispatching to a custom
+    :class:`torch.autograd.Function`.
+    """
 
-    # Launch the Metal kernel
-    kernel_func(
-        x_int8,
-        w_int8,
-        out,
-        torch.tensor([batch_size], dtype=torch.int32, device=device),
-        torch.tensor([input_size], dtype=torch.int32, device=device),
-        torch.tensor([output_size], dtype=torch.int32, device=device),
-        threads=batch_size * output_size,
-    )
-
-    return out
+    if x.dtype != torch.int8 or w.dtype != torch.int8:
+        raise TypeError("gemm_lowbit expects int8 inputs")
+    return _LowBitMatMul.apply(x, w)
 
 def quantize_tensor(x: torch.Tensor, eps: float = 1e-5):
     gamma = x.abs().mean()
