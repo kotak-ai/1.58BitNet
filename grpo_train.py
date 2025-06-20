@@ -120,7 +120,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Path to RewardModel checkpoint (use F1 reward if not set)",
     )
     parser.add_argument("--log_interval", type=int, default=10, help="Steps between logging metrics")
-    parser.add_argument("--csv_log", type=str, default=None, help="Optional CSV log file")
+    parser.add_argument(
+        "--csv_log",
+        type=str,
+        default=None,
+        help="Optional CSV log file (includes a few corrected samples if two_layer is used)",
+    )
     parser.add_argument(
         "--guiding_prompt",
         type=str,
@@ -164,10 +169,12 @@ def main():
     )
 
     csv_writer = None
+    NUM_LOG_TEXT = 3
     if args.csv_log:
         fieldnames = ["step", "loss", "mean_reward", "kl"]
         if args.two_layer:
             fieldnames.append("improvement_rate")
+            fieldnames.extend([f"corrected_{i+1}" for i in range(NUM_LOG_TEXT)])
         write_header = not os.path.exists(args.csv_log)
         csv_file = open(args.csv_log, "a", newline="")
         csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -243,9 +250,15 @@ def main():
             kl = (torch.exp(lp) * (lp - lr_ref)) * mask
             kl_div = kl.sum() / mask.sum()
 
+        corrected_texts = []
         if args.two_layer:
             answers_holder["answers"] = [s["answer"] for s in batch]
-            loss, rate = trainer.train_batch(q, r, l, rew, optimizer)
+            log_n = NUM_LOG_TEXT if csv_writer else 0
+            res = trainer.train_batch(q, r, l, rew, optimizer, log_texts=log_n)
+            if log_n:
+                loss, rate, corrected_texts = res
+            else:
+                loss, rate = res
         else:
             loss = trainer.step(q, r, l, rew, optimizer)
             rate = None
@@ -258,6 +271,13 @@ def main():
         }
         if rate is not None:
             metrics["improvement_rate"] = rate
+        if args.two_layer:
+            for i in range(NUM_LOG_TEXT):
+                key = f"corrected_{i+1}"
+                if i < len(corrected_texts):
+                    metrics[key] = corrected_texts[i]
+                else:
+                    metrics[key] = ""
 
         if step % args.log_interval == 0:
             msg = (

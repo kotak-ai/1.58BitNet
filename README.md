@@ -59,7 +59,9 @@ Optional features:
 
 - `--config FILE` &ndash; JSON file with argument defaults (e.g. `guiding_prompt`).
 - `--two_layer` &ndash; enable the two stage trainer with self-correction.
-- `--csv_log LOG.csv` &ndash; append training metrics to a CSV file.
+- `--csv_log LOG.csv` &ndash; append metrics to a CSV file. When `--two_layer` is
+  active the log also includes up to three `corrected_n` columns with corrected
+  answers for inspection.
 - `--resume CKPT` &ndash; resume training from a checkpoint created with
   `save_checkpoint`.
 
