@@ -1,6 +1,6 @@
 import unittest
 import torch
-from evaluation import evaluate_model
+from evaluation import evaluate_model, evaluate_reasoning_model
 
 class DummyTokenizer:
     pad_token_id = 0
@@ -63,6 +63,46 @@ class EvalTest(unittest.TestCase):
         expected = torch.tensor([[2, 4, 1, 2]], dtype=torch.long)
         self.assertEqual(len(model.calls), 2)
         self.assertTrue(torch.equal(model.calls[1], expected))
+
+
+class ReasoningEvalTest(unittest.TestCase):
+    def test_accuracy_metrics(self):
+        data = [{"query": "a", "answer": "42"}]
+        class Tok(DummyTokenizer):
+            _map = {'a':2,'4':4,'2':5}
+            _rev = {v:k for k,v in _map.items()}
+        tok = Tok()
+
+        class Model(torch.nn.Module):
+            def generate(self, inp, max_length, do_sample=False):
+                return torch.tensor([inp[0].tolist() + [4,5]])
+
+        metrics = evaluate_reasoning_model(Model(), tok, data, 2)
+        self.assertAlmostEqual(metrics["accuracy_t1"], 1.0)
+        self.assertAlmostEqual(metrics["delta_i2c"], 0.0)
+
+    def test_two_layer_metrics(self):
+        data = [{"query": "a", "answer": "2"}]
+        class Tok(DummyTokenizer):
+            _map = {'a':2,'2':5,'4':4}
+            _rev = {v:k for k,v in _map.items()}
+        tok = Tok()
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+            def generate(self, inp, max_length, do_sample=False):
+                self.calls += 1
+                token = 4 if self.calls == 1 else 5
+                return torch.cat([inp, torch.tensor([[token]])], dim=1)
+
+        metrics = evaluate_reasoning_model(
+            Model(), tok, data, 1, two_layer=True, guiding_prompt="a", second_max_length=1
+        )
+        self.assertAlmostEqual(metrics["accuracy_t1"], 0.0)
+        self.assertAlmostEqual(metrics["accuracy_t2"], 1.0)
+        self.assertAlmostEqual(metrics["delta_i2c"], 1.0)
 
 if __name__ == '__main__':
     unittest.main()

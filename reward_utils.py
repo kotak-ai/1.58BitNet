@@ -84,6 +84,34 @@ def qa_reward(generated: str, reference: str) -> float:
     return f1_score(generated, reference)
 
 
+_BOXED_RE = re.compile(r"\\boxed\{([^}]*)\}")
+_HASH_RE = re.compile(r"####\s*([^\n]*)")
+_ANS_RE = re.compile(r"[Aa]nswer\s*[:=]\s*([^\n]*)")
+
+
+def extract_final_answer(text: str) -> str:
+    """Return the final answer extracted from ``text``.
+
+    This is a lightweight heuristic suitable for reasoning datasets where the
+    solution ends with a boxed value or ``####`` marker.  When no marker is
+    present the last number in the string is used as a fallback.
+    """
+
+    for regex in (_BOXED_RE, _HASH_RE, _ANS_RE):
+        m = regex.search(text)
+        if m:
+            return m.group(1).strip().rstrip(".")
+    nums = re.findall(r"-?\d+(?:\.\d+)?", text)
+    if nums:
+        return nums[-1].rstrip(".")
+    return text.strip()
+
+
+def accuracy_reward(generated: str, reference: str) -> float:
+    """Return ``1.0`` when ``generated`` matches ``reference`` exactly."""
+    return float(extract_final_answer(generated) == extract_final_answer(reference))
+
+
 class RewardModelScorer:
     """Use a sequence classification model to score responses."""
 

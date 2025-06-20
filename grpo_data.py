@@ -27,6 +27,38 @@ def load_qa_dataset(path: str) -> List[Dict[str, str]]:
     return data
 
 
+def load_math_dataset(split: str = "test[:500]") -> List[Dict[str, str]]:
+    """Load the MATH benchmark via the :mod:`datasets` library."""
+    from datasets import load_dataset
+
+    ds = load_dataset("hendrycks/math", split=split)
+    return [{"query": x["problem"], "answer": x["solution"]} for x in ds]
+
+
+def load_gsm8k_dataset(split: str = "test") -> List[Dict[str, str]]:
+    """Load the GSM8K dataset."""
+    from datasets import load_dataset
+
+    ds = load_dataset("openai/gsm8k", "main", split=split)
+    return [{"query": x["question"], "answer": x["answer"]} for x in ds]
+
+
+def load_minerva_math_dataset(split: str = "test") -> List[Dict[str, str]]:
+    """Load the Minerva Math dataset used in the paper."""
+    from datasets import load_dataset
+
+    ds = load_dataset("knoveleng/Minerva-Math", split=split)
+    return [{"query": x["problem"], "answer": x["solution"]} for x in ds]
+
+
+def load_olympiadbench_dataset(split: str = "test") -> List[Dict[str, str]]:
+    """Load the OlympiadBench dataset."""
+    from datasets import load_dataset
+
+    ds = load_dataset("lmms-lab/OlympiadBench", split=split)
+    return [{"query": x["problem"], "answer": x["solution"]} for x in ds]
+
+
 def pad_sequences(seqs: List[List[int]], pad_id: int) -> torch.Tensor:
     max_len = max(len(s) for s in seqs)
     tensor = torch.full((len(seqs), max_len), pad_id, dtype=torch.long)
