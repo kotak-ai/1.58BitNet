@@ -100,7 +100,7 @@ python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model r
 
 ## Two-Layer Self-Correction
 
-Passing `--two_layer` enables a second GRPO pass that attempts to refine the first answer. The second pass concatenates the query, the prior answer and the text from `--guiding_prompt` before generating the correction.
+Passing `--two_layer` enables a second GRPO pass that attempts to refine the first answer. The second pass concatenates the query, the original answer and the text from `--guiding_prompt` (separated by the tokenizer's `sep_token_id` or `eos_token_id`) before generating the correction.
 
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model rm.ckpt --output_dir grpo_model --two_layer --guiding_prompt "Review and correct the answer:"
