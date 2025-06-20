@@ -58,10 +58,11 @@ class GRPOTest(unittest.TestCase):
         )
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         queries = torch.randint(0, 10, (1, 3))
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
         responses = torch.randint(0, 10, (1, 2, 4))
         lengths = torch.tensor([[4,4]])
         rewards = torch.tensor([[0.0,1.0]])
-        loss, rate = trainer.train_batch(queries, responses, lengths, rewards, optim)
+        loss, rate = trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
         self.assertIsInstance(loss.item(), float)
         self.assertGreaterEqual(rate, 0.0)
         self.assertLessEqual(rate, 1.0)
@@ -102,11 +103,12 @@ class GRPOTest(unittest.TestCase):
 
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
         responses = torch.tensor([[[4, 5, 6, 7]]], dtype=torch.long)
         lengths = torch.tensor([[4]], dtype=torch.long)
         rewards = torch.tensor([[0.0]], dtype=torch.float)
 
-        loss, rate = trainer.train_batch(queries, responses, lengths, rewards, optim)
+        loss, rate = trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
         self.assertIsInstance(loss.item(), float)
         self.assertEqual(rate, 1.0)
 
@@ -129,11 +131,13 @@ class GRPOTest(unittest.TestCase):
         )
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         queries = torch.randint(0, 10, (1, 3))
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
         responses = torch.randint(0, 10, (1, 2, 4))
         lengths = torch.tensor([[4, 4]])
         rewards = torch.tensor([[0.0, 1.0]])
         loss, rate, texts = trainer.train_batch(
             queries,
+            ql,
             responses,
             lengths,
             rewards,
@@ -155,6 +159,7 @@ class GRPOTest(unittest.TestCase):
         )
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         queries = torch.randint(0, 10, (1, 3))
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
         responses = torch.randint(0, 10, (1, 2, 4))
         lengths = torch.tensor([[4, 4]])
         rewards = torch.tensor([[0.0, 1.0]])
@@ -169,7 +174,7 @@ class GRPOTest(unittest.TestCase):
             return torch.tensor(0.0)
 
         trainer.layer2.step = layer2_step
-        trainer.train_batch(queries, responses, lengths, rewards, optim)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
         self.assertTrue(called["ok"])
         changed = any(
             not torch.allclose(p, q) for p, q in zip(model.parameters(), init_params)

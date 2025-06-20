@@ -42,12 +42,13 @@ def build_grpo_batch(
     group_size: int,
     max_length: int,
     reward_fn: Callable[[str, str, str], float] = f1_reward,
-) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
+) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
     """Generate candidate responses and compute rewards."""
     q_tokens = [tokenizer.encode(s['query'], add_special_tokens=False) for s in samples]
     answers = [s['answer'] for s in samples]
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
     queries = pad_sequences(q_tokens, pad_id)
+    q_lens = torch.tensor([len(q) for q in q_tokens], dtype=torch.long)
 
     B = len(samples)
     responses = []
@@ -79,7 +80,7 @@ def build_grpo_batch(
             resp_tensor[b, g, :len(seq)] = torch.tensor(seq, dtype=torch.long)
             len_tensor[b, g] = len(seq)
     reward_tensor = torch.tensor(rewards, dtype=torch.float)
-    return queries, resp_tensor, len_tensor, reward_tensor
+    return queries, q_lens, resp_tensor, len_tensor, reward_tensor
 
 
 def construct_second_pass_input(
