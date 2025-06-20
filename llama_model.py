@@ -29,12 +29,15 @@ class QuantizedEmbedding(nn.Module):
         self.weight = nn.Parameter(torch.randn(num_embeddings, embedding_dim))
         self.eps = 1e-5
         self.experiment = experiment
+        self.weight_scale = None
 
     def forward(self, input):
         if self.experiment:
-            quantized_weight = quantize_tensor_1_58bit(self.weight, self.eps)
+            q, scale = quantize_tensor_1_58bit(self.weight, self.eps)
+            self.weight_scale = scale
+            quantized_weight = q.float() * scale
         else:
-            quantized_weight = quantize_tensor(self.weight, self.eps)
+            quantized_weight = quantize_tensor(self.weight, self.eps).float()
         return nn.functional.embedding(input, quantized_weight)
 
 class BitLinear(nn.Linear):
@@ -43,6 +46,7 @@ class BitLinear(nn.Linear):
         self.num_groups = num_groups
         self.eps = 1e-5
         self.quantized_weight = None
+        self.weight_scale = None
 
     def ternarize_weights_groupwise(self):
         if self.quantized_weight is None:
@@ -58,8 +62,9 @@ class BitLinear(nn.Linear):
 
         # Perform quantization on a detached copy of the weights
         w_detached = w.detach()
-        scale = 1.0 / w_detached.abs().mean().clamp_(min=1e-5)
-        w_quant = (w_detached * scale).round().clamp_(-1, 1) / scale
+        q, scale = quantize_tensor_1_58bit(w_detached, self.eps)
+        self.weight_scale = scale
+        w_quant = q.float() * scale
         #w_quant = self.ternarize_weights_groupwise()
         y = nn.functional.linear(x_quant, w_quant)
         return y
@@ -186,16 +191,20 @@ class LlamaDecoderLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.self_attn(hidden_states, attention_mask, cos, sin)
         if self.experiment:
-            self.norm1.weight = nn.Parameter(quantize_tensor_1_58bit(self.norm1.weight))
-            self.norm1.bias = nn.Parameter(quantize_tensor_1_58bit(self.norm1.bias))
+            qw, sw = quantize_tensor_1_58bit(self.norm1.weight)
+            qb, sb = quantize_tensor_1_58bit(self.norm1.bias)
+            self.norm1.weight = nn.Parameter(qw.float() * sw)
+            self.norm1.bias = nn.Parameter(qb.float() * sb)
         hidden_states = self.norm1(hidden_states)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
         hidden_states = self.mlp(hidden_states)
         if self.experiment:
-            self.norm2.weight = nn.Parameter(quantize_tensor_1_58bit(self.norm2.weight))
-            self.norm2.bias = nn.Parameter(quantize_tensor_1_58bit(self.norm2.bias))
+            qw, sw = quantize_tensor_1_58bit(self.norm2.weight)
+            qb, sb = quantize_tensor_1_58bit(self.norm2.bias)
+            self.norm2.weight = nn.Parameter(qw.float() * sw)
+            self.norm2.bias = nn.Parameter(qb.float() * sb)
         hidden_states = self.norm2(hidden_states)
         hidden_states = residual + hidden_states
 

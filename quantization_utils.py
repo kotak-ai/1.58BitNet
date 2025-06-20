@@ -101,9 +101,13 @@ def quantize_tensor(x: torch.Tensor, eps: float = 1e-5):
     return quantized_x
 
 def quantize_tensor_1_58bit(x: torch.Tensor, eps: float = 1e-5):
-    gamma = x.abs().mean()
-    quantized_x = torch.clamp(torch.round(x / (gamma + eps)), -1, 1).to(torch.int8)
-    return quantized_x
+    """Ternary quantization with a mean absolute scale.
+
+    Returns the quantized tensor and the scale used for reconstruction.
+    """
+    scale = x.abs().mean().clamp(min=eps)
+    q = torch.round(x / scale).clamp_(-1, 1).to(torch.int8)
+    return q, scale
 
 def kv_cache_quant(x):
     scale = 15.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
