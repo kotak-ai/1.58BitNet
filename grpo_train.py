@@ -107,6 +107,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--group_size", type=int, default=2)
     parser.add_argument("--steps", type=int, default=100)
     parser.add_argument("--max_length", type=int, default=20)
+    parser.add_argument(
+        "--second_max_length",
+        type=int,
+        default=20,
+        help="Number of tokens to generate for the correction step",
+    )
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--clip_eps", type=float, default=0.2)
     parser.add_argument("--beta", type=float, default=0.01)
@@ -209,6 +215,7 @@ def main():
             clip_eps=args.clip_eps,
             beta=args.beta,
             verifier=simple_improvement_verifier,
+            second_max_length=args.second_max_length,
         )
     else:
         trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)

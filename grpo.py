@@ -84,6 +84,7 @@ class MultiLayerGRPOTrainer:
         clip_eps: float = 0.2,
         beta: float = 0.01,
         verifier: Callable[[float, float], bool] | None = None,
+        second_max_length: int = 20,
     ):
         self.layer1 = GRPOTrainer(model, ref_model, clip_eps, beta)
         self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta)
@@ -98,6 +99,7 @@ class MultiLayerGRPOTrainer:
             pad_id = getattr(tokenizer, "eos_token_id", 0)
         self.pad_id = pad_id
         self.verifier = verifier
+        self.second_max_length = second_max_length
 
     def train_batch(
         self,
@@ -132,7 +134,7 @@ class MultiLayerGRPOTrainer:
                 with torch.no_grad():
                     gen = self.layer2.model.generate(
                         inp.unsqueeze(0),
-                        max_length=inp_len + L,
+                        max_length=inp_len + self.second_max_length,
                         do_sample=True,
                     )
                 new_resp = gen[0, inp_len:]
