@@ -10,6 +10,7 @@ from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 from grpo_data import load_qa_dataset, build_grpo_batch, f1_reward
 from reward_utils import qa_reward
 from reward_model import RewardModel
+from training_utils import save_checkpoint, load_checkpoint, cosine_lr_wd
 
 try:  # progress bar is optional
     from tqdm import tqdm
@@ -84,17 +85,6 @@ def prepare_batch(samples, tokenizer, model, group_size, max_length, reward_fn=f
     return queries, q_lens, resp_tensor, len_tensor, reward_tensor
 
 
-def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int, path: str) -> None:
-    """Save model/optimizer states and step to ``path``."""
-    torch.save({"model": model.state_dict(), "optim": optimizer.state_dict(), "step": step}, path)
-
-
-def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, path: str) -> int:
-    """Load model/optimizer states from ``path`` and return training step."""
-    ckpt = torch.load(path, map_location="cpu")
-    model.load_state_dict(ckpt["model"])
-    optimizer.load_state_dict(ckpt["optim"])
-    return int(ckpt.get("step", 0))
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
@@ -114,11 +104,13 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Number of tokens to generate for the correction step",
     )
     parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--clip_eps", type=float, default=0.2)
     parser.add_argument("--beta", type=float, default=0.01)
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
     parser.add_argument("--two_layer", action="store_true", help="Use MultiLayer GRPO")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from checkpoint")
+    parser.add_argument("--save_interval", type=int, default=0, help="Steps between checkpoint saves")
     parser.add_argument(
         "--reward_model",
         type=str,
@@ -219,7 +211,7 @@ def main():
         )
     else:
         trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     start_step = 0
     if args.resume:
         start_step = load_checkpoint(model, optimizer, args.resume)
@@ -230,6 +222,10 @@ def main():
         iterator = tqdm(iterator, total=args.steps, initial=start_step)
 
     for step in iterator:
+        lr, wd = cosine_lr_wd(step, args.steps, args.lr, args.weight_decay)
+        for pg in optimizer.param_groups:
+            pg["lr"] = lr
+            pg["weight_decay"] = wd
         batch = random.sample(dataset, args.batch_size)
         q, ql, r, l, rew = build_grpo_batch(
             batch,
@@ -296,6 +292,8 @@ def main():
             logging.info(msg)
             if csv_writer:
                 csv_writer.writerow(metrics)
+        if args.save_interval and args.resume and step % args.save_interval == 0:
+            save_checkpoint(model, optimizer, step, args.resume)
 
     model.save_pretrained(args.output_dir)
     if args.resume:
