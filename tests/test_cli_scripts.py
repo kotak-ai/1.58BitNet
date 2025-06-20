@@ -1,0 +1,29 @@
+import unittest
+from unittest import mock
+import importlib
+
+TRANS_AVAILABLE = importlib.util.find_spec("transformers") is not None
+
+if TRANS_AVAILABLE:
+    import inference
+    import data_loading_compatibility as dlc
+
+
+@unittest.skipUnless(TRANS_AVAILABLE, "transformers not available")
+class InferenceCLITest(unittest.TestCase):
+    def test_main_calls_run(self):
+        with mock.patch('inference.run') as run:
+            inference.main(['--model_path', 'm', '--prompt', 'hi'])
+            run.assert_called_with('m', ['hi'], max_length=100, evaluate=False)
+
+
+@unittest.skipUnless(TRANS_AVAILABLE, "transformers not available")
+class DataLoadingCLITest(unittest.TestCase):
+    def test_main_calls_run(self):
+        with mock.patch('data_loading_compatibility.run') as run:
+            dlc.main(['--model_path', 'm', '--text', 'hi'])
+            run.assert_called_with('m', 'hi', max_length=100)
+
+
+if __name__ == '__main__':
+    unittest.main()
