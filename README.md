@@ -135,7 +135,9 @@ python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_mo
 Passing `--two_layer` runs a second correction pass before scoring each answer.
 The correction concatenates the query, the first answer and the text from
 `--guiding_prompt` (default "Review and correct the answer:") before generating
-the final response.
+the final response.  Customize the prompt with `--guiding_prompt` and use
+`--second_max_length` to control how many tokens are generated for the
+correction.
 
 ## Inference
 

@@ -133,7 +133,8 @@ def evaluate_reasoning_model(
     }
 
 
-def main():
+def get_arg_parser() -> argparse.ArgumentParser:
+    """Return an argument parser for the CLI."""
     parser = argparse.ArgumentParser(description="Evaluate GRPO vs CE models")
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--ce_model", type=str, required=True)
@@ -162,74 +163,104 @@ def main():
         default=20,
         help="Tokens to generate for the correction",
     )
-    args = parser.parse_args()
+    return parser
 
-    if args.dataset.lower() == "math":
+
+def run(
+    dataset: str,
+    ce_model: str,
+    grpo_model: str,
+    *,
+    max_length: int = 20,
+    task: str = "qa",
+    two_layer: bool = False,
+    guiding_prompt: str = "Review and correct the answer:",
+    second_max_length: int = 20,
+) -> dict:
+    """Evaluate the CE and GRPO models and return the metrics."""
+    if dataset.lower() == "math":
         from grpo_data import load_math_dataset
         data = load_math_dataset()
-    elif args.dataset.lower() == "gsm8k":
+    elif dataset.lower() == "gsm8k":
         from grpo_data import load_gsm8k_dataset
         data = load_gsm8k_dataset()
-    elif args.dataset.lower() == "minerva":
+    elif dataset.lower() == "minerva":
         from grpo_data import load_minerva_math_dataset
         data = load_minerva_math_dataset()
-    elif args.dataset.lower() == "olympiadbench":
+    elif dataset.lower() == "olympiadbench":
         from grpo_data import load_olympiadbench_dataset
         data = load_olympiadbench_dataset()
     else:
-        data = load_qa_dataset(args.dataset)
+        data = load_qa_dataset(dataset)
     from transformers import AutoTokenizer
-    ce_tok = AutoTokenizer.from_pretrained(args.ce_model)
-    grpo_tok = AutoTokenizer.from_pretrained(args.grpo_model)
-    ce_model = LlamaModel.load_pretrained(args.ce_model)
-    grpo_model = LlamaModel.load_pretrained(args.grpo_model)
+    ce_tok = AutoTokenizer.from_pretrained(ce_model)
+    grpo_tok = AutoTokenizer.from_pretrained(grpo_model)
+    ce = LlamaModel.load_pretrained(ce_model)
+    grpo = LlamaModel.load_pretrained(grpo_model)
 
-    if args.task == "qa":
+    if task == "qa":
         ce_score = evaluate_model(
-            ce_model,
+            ce,
             ce_tok,
             data,
-            args.max_length,
-            two_layer=args.two_layer,
-            guiding_prompt=args.guiding_prompt,
-            second_max_length=args.second_max_length,
+            max_length,
+            two_layer=two_layer,
+            guiding_prompt=guiding_prompt,
+            second_max_length=second_max_length,
         )
         grpo_score = evaluate_model(
-            grpo_model,
+            grpo,
             grpo_tok,
             data,
-            args.max_length,
-            two_layer=args.two_layer,
-            guiding_prompt=args.guiding_prompt,
-            second_max_length=args.second_max_length,
+            max_length,
+            two_layer=two_layer,
+            guiding_prompt=guiding_prompt,
+            second_max_length=second_max_length,
         )
         print(f"CE model F1: {ce_score:.4f}")
         print(f"GRPO model F1: {grpo_score:.4f}")
-    else:
-        ce_metrics = evaluate_reasoning_model(
-            ce_model,
-            ce_tok,
-            data,
-            args.max_length,
-            two_layer=args.two_layer,
-            guiding_prompt=args.guiding_prompt,
-            second_max_length=args.second_max_length,
-        )
-        grpo_metrics = evaluate_reasoning_model(
-            grpo_model,
-            grpo_tok,
-            data,
-            args.max_length,
-            two_layer=args.two_layer,
-            guiding_prompt=args.guiding_prompt,
-            second_max_length=args.second_max_length,
-        )
-        print("CE model metrics:")
-        for k, v in ce_metrics.items():
-            print(f"  {k}: {v:.4f}")
-        print("GRPO model metrics:")
-        for k, v in grpo_metrics.items():
-            print(f"  {k}: {v:.4f}")
+        return {"ce_f1": ce_score, "grpo_f1": grpo_score}
+    ce_metrics = evaluate_reasoning_model(
+        ce,
+        ce_tok,
+        data,
+        max_length,
+        two_layer=two_layer,
+        guiding_prompt=guiding_prompt,
+        second_max_length=second_max_length,
+    )
+    grpo_metrics = evaluate_reasoning_model(
+        grpo,
+        grpo_tok,
+        data,
+        max_length,
+        two_layer=two_layer,
+        guiding_prompt=guiding_prompt,
+        second_max_length=second_max_length,
+    )
+    print("CE model metrics:")
+    for k, v in ce_metrics.items():
+        print(f"  {k}: {v:.4f}")
+    print("GRPO model metrics:")
+    for k, v in grpo_metrics.items():
+        print(f"  {k}: {v:.4f}")
+    return {"ce": ce_metrics, "grpo": grpo_metrics}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = get_arg_parser()
+    args = parser.parse_args(argv)
+
+    run(
+        args.dataset,
+        args.ce_model,
+        args.grpo_model,
+        max_length=args.max_length,
+        task=args.task,
+        two_layer=args.two_layer,
+        guiding_prompt=args.guiding_prompt,
+        second_max_length=args.second_max_length,
+    )
 
 
 if __name__ == "__main__":
