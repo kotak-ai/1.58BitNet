@@ -91,6 +91,47 @@ def kv_cache_quant(x):
     y = (x * scale).round().clamp_(-16, 15)
     return y
 
+# === Ternary Packing Utilities ===
+
+_TER_MULTS = torch.tensor([1, 3, 9, 27, 81], dtype=torch.int32)
+
+
+def pack_ternary(t: torch.Tensor) -> torch.ByteTensor:
+    """Pack a tensor with values in ``{-1, 0, 1}`` into base-3 bytes.
+
+    Five ternary values are stored per byte giving approximately 1.6 bits per
+    value.  The original shape is not stored and must be provided when
+    unpacking.
+    """
+
+    if t.dtype != torch.int8:
+        raise TypeError("pack_ternary expects int8 input")
+
+    flat = (t + 1).view(-1).to(torch.int32)
+    pad = (-flat.numel()) % 5
+    if pad:
+        flat = torch.cat([flat, flat.new_zeros(pad)])
+    flat = flat.view(-1, 5)
+    factors = _TER_MULTS.to(flat.device)
+    packed = (flat * factors).sum(dim=1).to(torch.uint8)
+    return packed
+
+
+def unpack_ternary(packed: torch.ByteTensor, shape) -> torch.Tensor:
+    """Reverse :func:`pack_ternary` returning an ``int8`` tensor."""
+
+    if packed.dtype != torch.uint8:
+        raise TypeError("unpack_ternary expects uint8 input")
+
+    code = packed.to(torch.int32)
+    digits = []
+    for _ in range(5):
+        digits.append(code % 3)
+        code //= 3
+    digits = torch.stack(digits, dim=1)
+    out = digits.view(-1)[: int(np.prod(shape))].to(torch.int8) - 1
+    return out.view(shape)
+
 #def pack_quantized_tensor(quantized_tensor: torch.Tensor):
 #    padded_length = (quantized_tensor.numel() + 4) // 5 * 5
 #    padded_tensor = torch.full((padded_length,), -1, dtype=torch.int8)
