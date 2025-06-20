@@ -1,0 +1,9 @@
+# Minimum dependencies for 1.58 BitNet
+numpy>=1.23
+psutil>=5.9
+safetensors>=0.3.1
+torch>=2.0
+transformers>=4.31
+datasets>=2.14
+nltk>=3.8
+tqdm>=4.66
