@@ -5,7 +5,19 @@ try:
     from transformers import LlamaConfig, AutoTokenizer
 except Exception:  # pragma: no cover - transformers may be missing
     LlamaConfig = AutoTokenizer = None  # type: ignore[misc]
-from quantization_utils import quantize_tensor, activation_quant, weight_quant, activation_norm_quant, gemm_lowbit, kv_cache_quant, act_quant_8bit, act_quant_4bit, quantize_tensor_1_58bit
+from quantization_utils import (
+    quantize_tensor,
+    activation_quant,
+    weight_quant,
+    activation_norm_quant,
+    gemm_lowbit,
+    kv_cache_quant,
+    act_quant_8bit,
+    act_quant_4bit,
+    quantize_tensor_1_58bit,
+    pack_quantized_tensor,
+    unpack_quantized_tensor,
+)
 try:
     from safetensors.torch import save_file, load_file
 except Exception:  # pragma: no cover - safetensors may be missing
@@ -313,10 +325,15 @@ class LlamaModel(nn.Module):
         # Load the state dict from the model.safetensors file
         state_dict = load_file(os.path.join(model_path, "model.safetensors"))
 
-        # Remove the 'model.' prefix from the state dict keys
-        adjusted_state_dict = {key.replace('model.', ''): value for key, value in state_dict.items()}
+        adjusted_state_dict = {}
+        for key, value in state_dict.items():
+            if key.endswith(".shape"):
+                continue
+            shape_key = key + ".shape"
+            if shape_key in state_dict:
+                value = unpack_quantized_tensor(value, state_dict[shape_key])
+            adjusted_state_dict[key.replace("model.", "")] = value
 
-        # Load the adjusted state dict into the model
         model.load_state_dict(adjusted_state_dict)
 
         return model
@@ -419,19 +436,19 @@ class LlamaModel(nn.Module):
             if isinstance(param, torch.Tensor):
                 print(f"Before quantization: {name} - Size: {param.numel() * param.element_size()} bytes")
 
-                # Use 'model.' prefix for compatibility
-                adjusted_name = f'model.{name}'
+                adjusted_name = f"model.{name}"
 
-                if "embed_tokens" in name:
-                    eps = 1e-5  # Default eps value for embedding layer
-                else:
-                    eps = 1e-5  # Default eps value for other parameters
                 quantized_param = quantize_tensor(param)
-                quantized_state_dict[adjusted_name] = quantized_param
-                quantized_size = quantized_param.numel() * quantized_param.element_size()
+                packed, shape = pack_quantized_tensor(quantized_param)
+
+                quantized_state_dict[adjusted_name] = packed
+                quantized_state_dict[adjusted_name + ".shape"] = shape
+
+                quantized_size = packed.numel() * packed.element_size() + shape.numel() * shape.element_size()
                 total_size += quantized_size
                 print(f"After quantization: {adjusted_name} - Size: {quantized_size} bytes")
                 weight_map["model." + name] = "model.safetensors"
+                weight_map["model." + name + ".shape"] = "model.safetensors"
 
         index_data = {
             "metadata": {"total_size": total_size},
