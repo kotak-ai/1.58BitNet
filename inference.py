@@ -4,7 +4,7 @@ from transformers import LlamaConfig, AutoTokenizer
 from transformers.models.llama.modeling_llama import LlamaModel
 from transformers.activations import ACT2FN
 from llama_model import LlamaModel
-from quantization_utils import activation_norm_quant, gemm_lowbit_kernel_mps
+from quantization_utils import activation_norm_quant, gemm_lowbit
 from safetensors.torch import load
 import time
 import psutil
@@ -22,7 +22,7 @@ class BitLinear(nn.Linear):
         w = self.weight  # a 1.58-bit weight tensor with shape [d, k]
         w_scale = self.weight_scale  # a full-precision weight scale tensor with shape [1]
         x_quant, x_scale = activation_norm_quant(x)
-        y = gemm_lowbit_kernel_mps(x_quant, w) / w_scale / x_scale
+        y = gemm_lowbit(x_quant, w) / w_scale / x_scale
         return y
 
 

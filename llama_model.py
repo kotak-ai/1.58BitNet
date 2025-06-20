@@ -5,7 +5,7 @@ try:
     from transformers import LlamaConfig, AutoTokenizer
 except Exception:  # pragma: no cover - transformers may be missing
     LlamaConfig = AutoTokenizer = None  # type: ignore[misc]
-from quantization_utils import quantize_tensor, activation_quant, weight_quant, activation_norm_quant, gemm_lowbit_kernel_mps, kv_cache_quant, act_quant_8bit, act_quant_4bit, quantize_tensor_1_58bit
+from quantization_utils import quantize_tensor, activation_quant, weight_quant, activation_norm_quant, gemm_lowbit, kv_cache_quant, act_quant_8bit, act_quant_4bit, quantize_tensor_1_58bit
 try:
     from safetensors.torch import save_file, load_file
 except Exception:  # pragma: no cover - safetensors may be missing
