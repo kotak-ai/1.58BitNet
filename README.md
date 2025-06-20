@@ -116,6 +116,11 @@ F1 reward as training.  The dataset format matches the GRPO training set
 python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_model
 ```
 
+Passing `--two_layer` runs a second correction pass before scoring each answer.
+The correction concatenates the query, the first answer and the text from
+`--guiding_prompt` (default "Review and correct the answer:") before generating
+the final response.
+
 
 ## Reward Model Examples
 
