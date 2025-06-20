@@ -4,17 +4,24 @@ This repository provides an implementation of the 1.58 BitNet LLaMA model. The p
 
 ## Requirements and Setup
 
-The code depends only on a few common packages:
+The code depends on a handful of well‑known libraries.  A
+`requirements.txt` file is provided with the minimum tested versions:
 
-- `torch`
-- `transformers`
-- `datasets` (for dataset loading)
-- `safetensors`
+```text
+torch>=2.0
+transformers>=4.31
+datasets>=2.14
+nltk>=3.8
+numpy>=1.23
+psutil>=5.9
+safetensors>=0.3.1
+tqdm>=4.66
+```
 
 Install them with:
 
 ```bash
-pip install torch transformers datasets safetensors
+pip install -r requirements.txt
 ```
 
 The training scripts are tested on Apple MPS hardware but will run on any
@@ -196,10 +203,11 @@ custom reward models for GRPO training.
 
 ## Running the Tests
 
-Unit tests cover the data utilities, GRPO trainer, reward models and evaluation
-code.  Run them with:
+Unit tests cover the data utilities, GRPO trainer, reward models and
+evaluation code. Install the requirements first and then run:
 
 ```bash
+pip install -r requirements.txt
 pytest
 ```
 
