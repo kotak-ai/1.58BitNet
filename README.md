@@ -121,6 +121,33 @@ The correction concatenates the query, the first answer and the text from
 `--guiding_prompt` (default "Review and correct the answer:") before generating
 the final response.
 
+## Inference
+
+`inference.py` generates text from a saved model. Provide one or more prompts on
+the command line:
+
+```bash
+python inference.py --model_path path/to/model --prompt "Hello" --prompt "World"
+```
+
+The script can also be imported and called programmatically:
+
+```python
+from inference import run
+run("path/to/model", ["Hello"], max_length=20)
+```
+
+## Transformers Compatibility
+
+`data_loading_compatibility.py` demonstrates loading a checkpoint with
+`transformers` and generating text:
+
+```bash
+python data_loading_compatibility.py --model_path path/to/model --text "Example"
+```
+
+The `run` function can be used directly from Python for integration tests.
+
 
 ## Reward Model Examples
 
@@ -134,7 +161,7 @@ Two reference implementations are provided for scoring generated answers:
 Run the demo for the simple model with:
 
 ```bash
-python simple_reward_model.py
+python simple_reward_model.py --epochs 100 --lr 0.1
 ```
 
 The demo prints higher scores for correct answers and can be extended to create

@@ -1,3 +1,4 @@
+import argparse
 import torch
 import torch.nn as nn
 from transformers import LlamaConfig, AutoTokenizer
@@ -141,22 +142,44 @@ def calculate_perplexity(model, tokenizer, text):
 
     return perplexity.item()
 
-model_path = input("Enter the path to your optimized model: ")
 
-model, tokenizer = load_quantized_model(model_path)
+def get_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run inference with a quantised model")
+    parser.add_argument("--model_path", required=True, help="Path to the model directory")
+    parser.add_argument("--prompt", action="append", help="Prompt text (may be repeated)")
+    parser.add_argument("--prompt_file", help="File containing prompts, one per line")
+    parser.add_argument("--max_length", type=int, default=100, help="Generation length")
+    parser.add_argument("--eval", action="store_true", help="Evaluate metrics instead of generating")
+    return parser
 
-prompts = [
-    "The quick brown fox",
-    "Artificial intelligence is",
-    "In a shocking turn of events,",
-]
 
-evaluate_metrics(model, tokenizer, prompts)
+def _load_prompts(args: argparse.Namespace) -> list[str]:
+    prompts = args.prompt or []
+    if args.prompt_file:
+        with open(args.prompt_file, "r", encoding="utf-8") as f:
+            prompts.extend([l.strip() for l in f if l.strip()])
+    return prompts
 
-while True:
-    prompt = input("Enter a prompt (or 'quit' to exit): ")
-    if prompt.lower() == "quit":
-        break
 
-    generated_text = generate_text(model, tokenizer, prompt)
-    print("Generated text:", generated_text)
+def run(model_path: str, prompts: list[str], max_length: int = 100, evaluate: bool = False) -> list[str] | None:
+    model, tokenizer = load_quantized_model(model_path)
+    if evaluate:
+        evaluate_metrics(model, tokenizer, prompts, max_length=max_length)
+        return None
+    outputs = []
+    for p in prompts:
+        outputs.append(generate_text(model, tokenizer, p, max_length=max_length))
+    return outputs
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = get_arg_parser()
+    args = parser.parse_args(argv)
+    prompts = _load_prompts(args)
+    if not prompts:
+        parser.error("No prompts provided")
+    run(args.model_path, prompts, max_length=args.max_length, evaluate=args.eval)
+
+
+if __name__ == "__main__":
+    main()
