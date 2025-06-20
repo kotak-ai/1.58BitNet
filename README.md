@@ -77,6 +77,22 @@ Example `config.json` providing defaults:
 `guiding_prompt` can be either the prompt text itself or a path to a file
 containing the text.
 
+### GRPO Hyperparameters
+
+The training scripts implement the equations from the GRPO paper. Important
+parameters which mirror the publication are:
+
+- `clip_eps` – the PPO style clipping range controlling the update magnitude.
+- `beta` – weight applied to the KL penalty against the reference policy.
+- `verifier` – optional function used in the second layer to decide if a
+  correction is considered an improvement.
+- The second GRPO layer trains on corrected answers whose reward improves over
+  the first pass, using the reward difference as the advantage.
+
+Advantages are normalised by their standard deviation. The KL penalty uses the
+forward KL estimator $\sum_t p_\theta(t) (\log p_\theta(t) - \log p_{\text{ref}}(t))$
+averaged over tokens.
+
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path path/to/model \
     --output_dir grpo_out --steps 1000 --csv_log metrics.csv

@@ -20,17 +20,34 @@ class GRPOTrainer:
         logp = F.log_softmax(logits, dim=-1)
         return logp.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
 
-    def grpo_objective(self, logp: torch.Tensor, old_logp: torch.Tensor, adv: torch.Tensor, ref_logp: torch.Tensor) -> torch.Tensor:
+    def grpo_objective(
+        self,
+        logp: torch.Tensor,
+        old_logp: torch.Tensor,
+        adv: torch.Tensor,
+        ref_logp: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute the clipped policy objective with KL penalty."""
+
         ratio = torch.exp(logp - old_logp)
         clipped = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps)
-        # advantages may be per token or per sequence
         if adv.dim() == 1:
             adv = adv.unsqueeze(1).expand_as(logp)
         obj = torch.minimum(ratio * adv, clipped * adv)
-        kl = (torch.exp(logp) * (logp - ref_logp)).sum(-1)
-        return obj.mean(dim=1) - self.beta * kl
+        obj = (obj * mask).sum(dim=1) / mask.sum(dim=1)
+        kl = (torch.exp(logp) * (logp - ref_logp) * mask).sum(dim=1) / mask.sum(dim=1)
+        return obj - self.beta * kl
 
-    def step(self, queries: torch.Tensor, responses: torch.Tensor, lengths: torch.Tensor, rewards: torch.Tensor, optimizer: torch.optim.Optimizer) -> torch.Tensor:
+    def step(
+        self,
+        queries: torch.Tensor,
+        responses: torch.Tensor,
+        lengths: torch.Tensor,
+        rewards: torch.Tensor,
+        optimizer: torch.optim.Optimizer,
+        advantages: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Performs a single GRPO policy update.
 
         Args:
@@ -43,8 +60,12 @@ class GRPOTrainer:
         """
         B, G, L = responses.shape
         with torch.no_grad():
-            baseline = rewards.mean(dim=1, keepdim=True)
-            adv = rewards - baseline
+            if advantages is None:
+                baseline = rewards.mean(dim=1, keepdim=True)
+                adv = rewards - baseline
+            else:
+                adv = advantages
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         responses_flat = responses.view(B * G, L)
         lengths_flat = lengths.view(B * G)
         logits = self.model(responses_flat)
@@ -54,7 +75,8 @@ class GRPOTrainer:
         old_logp = self._log_probs(old_logits, responses_flat)
         ref_logp = self._log_probs(ref_logits, responses_flat)
         adv_flat = adv.view(B * G)
-        obj = self.grpo_objective(logp, old_logp, adv_flat, ref_logp)
+        mask = (torch.arange(L, device=responses.device).unsqueeze(0) < lengths_flat.unsqueeze(1)).float()
+        obj = self.grpo_objective(logp, old_logp, adv_flat, ref_logp, mask)
         loss = -torch.mean(obj)
         optimizer.zero_grad()
         loss.backward()
@@ -129,6 +151,7 @@ class MultiLayerGRPOTrainer:
         corrected = []
         corrected_len = []
         corrected_rewards = []
+        corrected_adv = []
         corrected_queries = []
         log_text_list: list[str] = []
         success = 0
@@ -157,13 +180,15 @@ class MultiLayerGRPOTrainer:
                     improved = reward_val > base_reward
                 else:
                     improved = bool(self.verifier(reward_val, base_reward))
-                success += int(improved)
-                corrected.append(new_resp)
-                corrected_len.append(new_resp.numel())
-                corrected_rewards.append(reward_val)
-                corrected_queries.append(queries[b])
-                if len(log_text_list) < log_texts:
-                    log_text_list.append(text)
+                if improved:
+                    success += 1
+                    corrected.append(new_resp)
+                    corrected_len.append(new_resp.numel())
+                    corrected_rewards.append(reward_val)
+                    corrected_adv.append(reward_val - base_reward)
+                    corrected_queries.append(queries[b])
+                    if len(log_text_list) < log_texts:
+                        log_text_list.append(text)
         if not corrected:
             if log_texts:
                 return loss1, 0.0, log_text_list
@@ -176,8 +201,16 @@ class MultiLayerGRPOTrainer:
             corr_tensor[i, 0, : seq.numel()] = seq
         corr_len = torch.tensor(corrected_len, dtype=torch.long).unsqueeze(1)
         corr_rewards = torch.tensor(corrected_rewards, dtype=torch.float).unsqueeze(1)
+        corr_adv = torch.tensor(corrected_adv, dtype=torch.float).unsqueeze(1)
         corr_queries = torch.stack(corrected_queries)
-        loss2 = self.layer2.step(corr_queries, corr_tensor, corr_len, corr_rewards, optimizer)
+        loss2 = self.layer2.step(
+            corr_queries,
+            corr_tensor,
+            corr_len,
+            corr_rewards,
+            optimizer,
+            advantages=corr_adv,
+        )
         if log_texts:
             return loss1 + loss2, float(success) / (B * G), log_text_list
         return loss1 + loss2, float(success) / (B * G)

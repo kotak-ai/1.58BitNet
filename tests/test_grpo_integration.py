@@ -59,11 +59,18 @@ class GRPOIntegrationTest(unittest.TestCase):
         for i, ans in enumerate(a_tokens):
             responses[i, 1, :len(ans)] = torch.tensor(ans)
             responses[i, 0, :len(ans)] = torch.randint(2, 7, (len(ans),))
-        model = DummyModel()
-        ref = DummyModel()
+        class ConstantModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        model = ConstantModel()
+        ref = ConstantModel()
         trainer = GRPOTrainer(model, ref)
         eval_optim = torch.optim.SGD(model.parameters(), lr=0.0)
-        train_optim = torch.optim.SGD(model.parameters(), lr=0.05)
+        train_optim = torch.optim.SGD(model.parameters(), lr=0.1)
         trainer.old_model.load_state_dict(model.state_dict())
         init_loss = trainer.step(queries, responses, lengths, rewards, eval_optim).item()
         trainer.old_model.load_state_dict(model.state_dict())
@@ -96,8 +103,15 @@ class GRPOIntegrationTest(unittest.TestCase):
         for i, ans in enumerate(a_tokens):
             responses[i, 1, : len(ans)] = torch.tensor(ans)
             responses[i, 0, : len(ans)] = torch.randint(2, 7, (len(ans),))
-        model = DummyModel()
-        ref = DummyModel()
+        class ConstantModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        model = ConstantModel()
+        ref = ConstantModel()
         trainer = MultiLayerGRPOTrainer(
             model,
             ref,
@@ -116,6 +130,63 @@ class GRPOIntegrationTest(unittest.TestCase):
         for r in rates:
             self.assertGreaterEqual(r, 0.0)
             self.assertLessEqual(r, 1.0)
+
+    def test_two_layer_loss_decreases(self):
+        torch.manual_seed(0)
+        data = [
+            {"query": "hi", "answer": "hello"},
+            {"query": "bye", "answer": "goodbye"},
+        ]
+        tok = DummyTokenizer()
+        q_tokens = [tok.encode(d["query"]) for d in data]
+        a_tokens = [tok.encode(d["answer"]) for d in data]
+        pad_id = tok.pad_token_id
+        queries = pad_sequences(q_tokens, pad_id)
+        q_lens = torch.tensor([len(q) for q in q_tokens], dtype=torch.long)
+        max_resp = max(len(a) for a in a_tokens)
+        B, G = len(data), 2
+        responses = torch.full((B, G, max_resp), pad_id, dtype=torch.long)
+        lengths = torch.full((B, G), max_resp, dtype=torch.long)
+        rewards = torch.tensor([[0.0, 1.0], [0.0, 1.0]])
+        for i, ans in enumerate(a_tokens):
+            responses[i, 1, : len(ans)] = torch.tensor(ans)
+            responses[i, 0, : len(ans)] = torch.randint(2, 7, (len(ans),))
+        class ConstantModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        model = ConstantModel()
+        ref = ConstantModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+        )
+        eval_optim = torch.optim.SGD(model.parameters(), lr=0.0)
+        train_optim = torch.optim.SGD(model.parameters(), lr=0.05)
+        trainer.layer1.old_model.load_state_dict(model.state_dict())
+        trainer.layer2.old_model.load_state_dict(model.state_dict())
+        init_loss, _ = trainer.train_batch(
+            queries, q_lens, responses, lengths, rewards, eval_optim
+        )
+        trainer.layer1.old_model.load_state_dict(model.state_dict())
+        trainer.layer2.old_model.load_state_dict(model.state_dict())
+        init_params = [p.clone() for p in model.parameters()]
+        for _ in range(40):
+            trainer.train_batch(queries, q_lens, responses, lengths, rewards, train_optim)
+        trainer.layer1.old_model.load_state_dict(model.state_dict())
+        trainer.layer2.old_model.load_state_dict(model.state_dict())
+        final_loss, _ = trainer.train_batch(
+            queries, q_lens, responses, lengths, rewards, eval_optim
+        )
+        self.assertLess(abs(final_loss.item()), abs(init_loss.item()))
+        changed = any(not torch.allclose(p, q) for p, q in zip(model.parameters(), init_params))
+        self.assertTrue(changed)
 
 
 if __name__ == "__main__":
