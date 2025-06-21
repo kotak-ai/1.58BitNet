@@ -136,6 +136,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
         default=20,
         help="Number of tokens to generate for the correction step",
     )
+    parser.add_argument(
+        "--augmentation_size",
+        type=int,
+        default=1,
+        help="Number of augmented corrections to generate per response (H parameter from paper)",
+    )
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--clip_eps", type=float, default=0.2)
@@ -255,6 +261,7 @@ def main():
             beta=args.beta,
             verifier=simple_improvement_verifier,
             second_max_length=args.second_max_length,
+            augmentation_size=args.augmentation_size,
         )
     else:
         trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
