@@ -91,7 +91,8 @@ Example `config.json` providing defaults:
 }
 ```
 `guiding_prompt` can be either the prompt text itself or a path to a file
-containing the text.
+containing one or more prompts. When multiple prompts are provided one is chosen
+at random for each correction step.
 
 ### GRPO Hyperparameters
 
@@ -137,6 +138,8 @@ Passing `--two_layer` enables a second GRPO pass that attempts to refine the fir
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model rm.ckpt --output_dir grpo_model --two_layer --guiding_prompt "Review and correct the answer:"
 ```
+`--guiding_prompt` also accepts a path to a text or JSON file containing multiple
+prompts. One of these prompts will be chosen at random for each correction.
 
 ## Evaluation
 
@@ -151,7 +154,9 @@ python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_mo
 Passing `--two_layer` runs a second correction pass before scoring each answer.
 The correction concatenates the query, the first answer and the text from
 `--guiding_prompt` (default "Review and correct the answer:") before generating
-the final response.  Customize the prompt with `--guiding_prompt` and use
+the final response.  `--guiding_prompt` may point to a file with several prompts;
+one will be chosen randomly for every correction.  Customize the prompt with
+`--guiding_prompt` and use
 `--second_max_length` to control how many tokens are generated for the
 correction.
 

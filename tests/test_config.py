@@ -13,12 +13,12 @@ class ConfigTest(unittest.TestCase):
         update_args_with_config(args, parser)
         self.assertEqual(args.lr, 0.5)
         self.assertEqual(args.group_size, 4)
-        self.assertEqual(args.guiding_prompt, "check")
+        self.assertEqual(args.guiding_prompt, ["check"])
         args = parser.parse_args(["--dataset", "d.json", "--model_path", "m", "--config", "tmp_cfg.json", "--lr", "0.1"])
         update_args_with_config(args, parser)
         self.assertEqual(args.lr, 0.1)
         self.assertEqual(args.group_size, 4)
-        self.assertEqual(args.guiding_prompt, "check")
+        self.assertEqual(args.guiding_prompt, ["check"])
 
     def test_guiding_prompt_file(self):
         parser = get_arg_parser()
@@ -29,6 +29,17 @@ class ConfigTest(unittest.TestCase):
             json.dump(cfg, f)
         args = parser.parse_args(["--dataset", "d.json", "--model_path", "m", "--config", "tmp_cfg2.json"])
         update_args_with_config(args, parser)
-        self.assertEqual(args.guiding_prompt, "file prompt")
+        self.assertEqual(args.guiding_prompt, ["file prompt"])
+
+    def test_guiding_prompt_list_file(self):
+        parser = get_arg_parser()
+        with open("prompts.txt", "w", encoding="utf-8") as f:
+            f.write("one\ntwo\n")
+        cfg = {"guiding_prompt": "prompts.txt"}
+        with open("tmp_cfg3.json", "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+        args = parser.parse_args(["--dataset", "d.json", "--model_path", "m", "--config", "tmp_cfg3.json"])
+        update_args_with_config(args, parser)
+        self.assertEqual(args.guiding_prompt, ["one", "two"])
 if __name__ == "__main__":
     unittest.main()

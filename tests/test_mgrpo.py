@@ -1,5 +1,6 @@
 import torch
 import unittest
+import random
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 
 
@@ -124,7 +125,7 @@ class GRPOTest(unittest.TestCase):
                 queries[0],
                 responses[0, 0],
                 torch.tensor([trainer.sep_id], dtype=torch.long),
-                trainer.guidance_tokens,
+                trainer.guidance_tokens[0],
             ],
             dim=0,
         )
@@ -293,6 +294,63 @@ class GRPOTest(unittest.TestCase):
 
         self.assertTrue(torch.equal(first, second))
         self.assertEqual(first.size(-1), trainer.second_max_length)
+
+    def test_random_guiding_prompt_selection(self):
+        class RecordingModel(DummyModel):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+
+            def generate(self, inp, max_length, do_sample=True):
+                self.calls.append(inp.clone())
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        prompts = ["fix", "check"]
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt=prompts,
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        trainer.layer2.step = lambda *args, **kwargs: torch.tensor(0.0)
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), 2, dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        random.seed(0)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        call1 = model.calls[-1][0]
+
+        random.seed(1)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        call2 = model.calls[-1][0]
+
+        enc = [
+            torch.tensor(tok.encode(p, add_special_tokens=False), dtype=torch.long)
+            for p in prompts
+        ]
+
+        def identify(call):
+            for e, name in zip(enc, prompts):
+                if torch.equal(call[-e.numel():], e):
+                    return name
+            return None
+
+        self.assertIn(identify(call1), prompts)
+        self.assertIn(identify(call2), prompts)
+        self.assertNotEqual(identify(call1), identify(call2))
 
 if __name__ == '__main__':
     unittest.main()
