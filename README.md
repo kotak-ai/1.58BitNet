@@ -225,6 +225,20 @@ python simple_reward_model.py --epochs 100 --lr 0.1
 The demo prints higher scores for correct answers and can be extended to create
 custom reward models for GRPO training.
 
+## Energy RL Demo
+
+The repository also includes a small reinforcement learning environment to
+experiment with energy‑aware scheduling. The `energy_rl_train.py` script trains a
+tabular Q‑learning agent and reports the average reward before and after
+training. Environment parameters can be customised on the command line:
+
+```bash
+python energy_rl_train.py --episodes 100 --max_steps 20 --harvest_rate 3
+```
+
+This prints the initial and final rewards so you can verify the agent learns a
+better policy.
+
 ## Running the Tests
 
 Unit tests cover the data utilities, GRPO trainer, reward models and
