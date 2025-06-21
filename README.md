@@ -68,9 +68,10 @@ dataset should be JSON or JSONL with one object per record:
 {"query": "...", "answer": "..."}
 ```
 
-During training candidate answers are generated for each query and scored.  If
-`--reward_model PATH` is provided the score comes from a saved
-`RewardModel`; otherwise the robust F1 reward from `qa_reward` is used.
+During training candidate answers are generated for each query and scored. If
+one or more `--reward_model` checkpoints are provided the scores from each model
+are combined (optionally weighted with `--reward_weights`) to approximate dense
+feedback. Without a reward model the robust F1 reward from `qa_reward` is used.
 
 Optional features:
 
@@ -126,10 +127,12 @@ Example command for a small CE run:
 python trainingv2.py --dataset data/train.jsonl --model_path llama_750m --output_dir ce_model --iters 10000 --batch_size 8
 ```
 
-Example command for GRPO with a reward model:
+Example command for GRPO with two reward models:
 
 ```bash
-python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model rm.ckpt --output_dir grpo_model
+python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
+    --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 \
+    --output_dir grpo_model
 ```
 
 ## Two-Layer Self-Correction
@@ -144,7 +147,9 @@ The correction prompt follows the template:
 `--guiding_prompt` may also be a path to a text or JSON file containing multiple prompts. One of these prompts will be chosen at random for each correction.
 
 ```bash
-python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model rm.ckpt --output_dir grpo_model --two_layer --guiding_prompt "Review and correct the answer:"
+python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
+    --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 \
+    --output_dir grpo_model --two_layer --guiding_prompt "Review and correct the answer:"
 ```
 `--guiding_prompt` also accepts a path to a text or JSON file containing multiple
 prompts. One of these prompts will be chosen at random for each correction.

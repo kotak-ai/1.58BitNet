@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Iterable, Sequence, Optional
+from typing import Iterable, Sequence, Optional, Callable
 
 class RewardModel(nn.Module):
     """Transformer-based scorer for query/response pairs.
@@ -123,3 +123,37 @@ class RewardModel(nn.Module):
         model.load_state_dict(state)
         model.eval()
         return model
+
+
+def load_reward_models(
+    paths: Sequence[str],
+    tokenizer,
+    weights: Sequence[float] | None = None,
+) -> Callable[[str, str, str], float]:
+    """Return a scoring function combining multiple reward models.
+
+    Parameters
+    ----------
+    paths : list[str]
+        Checkpoints to load with :meth:`RewardModel.load`.
+    tokenizer : object
+        Tokenizer passed to ``RewardModel.load``.
+    weights : list[float], optional
+        Relative weights for each model. Defaults to equal weighting.
+    """
+
+    models = [RewardModel.load(p, tokenizer) for p in paths]
+    if weights is None:
+        weights = [1.0] * len(models)
+    if len(weights) != len(models):
+        raise ValueError("weights must match number of reward models")
+    total = float(sum(weights))
+    norm = [float(w) / total for w in weights]
+
+    def score_fn(generated: str, reference: str, query: str) -> float:
+        score = 0.0
+        for m, w in zip(models, norm):
+            score += w * m.score(query, generated)
+        return score
+
+    return score_fn

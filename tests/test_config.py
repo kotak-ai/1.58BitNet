@@ -41,5 +41,22 @@ class ConfigTest(unittest.TestCase):
         args = parser.parse_args(["--dataset", "d.json", "--model_path", "m", "--config", "tmp_cfg3.json"])
         update_args_with_config(args, parser)
         self.assertEqual(args.guiding_prompt, ["one", "two"])
+
+    def test_multiple_reward_models_cli(self):
+        parser = get_arg_parser()
+        args = parser.parse_args([
+            "--dataset",
+            "d.json",
+            "--model_path",
+            "m",
+            "--reward_model",
+            "a.pt",
+            "b.pt",
+            "--reward_weights",
+            "0.4",
+            "0.6",
+        ])
+        self.assertEqual(args.reward_model, ["a.pt", "b.pt"])
+        self.assertEqual(args.reward_weights, [0.4, 0.6])
 if __name__ == "__main__":
     unittest.main()
