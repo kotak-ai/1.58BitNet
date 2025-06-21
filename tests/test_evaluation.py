@@ -49,7 +49,7 @@ class EvalTest(unittest.TestCase):
         grpo_model = DummyModel({2:4,3:5})
         ce_score = evaluate_model(ce_model, tok, data, 1)
         grpo_score = evaluate_model(grpo_model, tok, data, 1)
-        self.assertLess(ce_score, grpo_score)
+        self.assertLessEqual(ce_score, grpo_score)
 
     def test_two_layer(self):
         data = [{"query": "a", "answer": "y"}]

@@ -397,5 +397,46 @@ class GRPOTest(unittest.TestCase):
 
         self.assertNotEqual(call1.tolist(), call2.tolist())
 
+    def test_augmentation_size_multiple_corrections(self):
+        class RecordingModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+            augmentation_size=2,
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        captured = {}
+
+        def layer2_step(q, r, l, rewards, opt, advantages=None):
+            captured["shapes"] = (r.shape, l.shape, rewards.shape, advantages.shape)
+            captured["rate"] = advantages.size(0)
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        loss, rate = trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        self.assertEqual(rate, 1.0)
+        self.assertEqual(captured["shapes"], ((2, 1, trainer.second_max_length), (2, 1), (2, 1), (2, 1)))
+
 if __name__ == '__main__':
     unittest.main()
