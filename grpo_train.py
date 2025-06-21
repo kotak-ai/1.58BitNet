@@ -18,6 +18,15 @@ try:  # progress bar is optional
 except Exception:  # pragma: no cover - tqdm may not be installed
     tqdm = None
 
+DEFAULT_GUIDING_PROMPTS = [
+    "Where might I have gone wrong this time? Let me double-check carefully.",
+    "Wait, let me double-check that.",
+    "Wait a minute, let me make sure I didn't make a mistake.",
+    "Hmm, let me think if there's another way to approach this problem.",
+    "Wait, maybe I can think about it like this:",
+    "Another thought: maybe I can",
+    "But wait, let me just make sure I didn't miss anything in the original problem."
+]
 
 def load_dataset(path):
     """Load a dataset of {"query":..., "answer":...}. Supports JSON and JSONL."""
@@ -159,8 +168,8 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--guiding_prompt",
         type=str,
-        default="Review and correct the answer:",
-        help="Guiding prompt text or path to a file with one or more prompts",
+        default=None,
+        help="Guiding prompt text or path to a file with one or more prompts (defaults to paper prompts)",
     )
     parser.add_argument("--progress", action="store_true", help="Show progress bar if tqdm is available")
     return parser
@@ -191,6 +200,11 @@ def main():
     parser = get_arg_parser()
     args = parser.parse_args()
     update_args_with_config(args, parser)
+
+    if args.guiding_prompt is None:
+        args.guiding_prompt = DEFAULT_GUIDING_PROMPTS
+    else:
+        args.guiding_prompt = parse_guiding_prompts(args.guiding_prompt)
 
     logging.basicConfig(
         level=logging.INFO,
