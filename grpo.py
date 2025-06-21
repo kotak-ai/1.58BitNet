@@ -170,10 +170,10 @@ class MultiLayerGRPOTrainer:
                 resp = responses[b, g, : lengths[b, g]]
                 guidance = random.choice(self.guidance_tokens)
                 inp, inp_len = construct_second_pass_input(
+                    self.tokenizer,
                     q_tokens,
                     resp,
                     guidance,
-                    self.sep_id,
                 )
                 with torch.no_grad():
                     gen = self.layer2.model.generate(

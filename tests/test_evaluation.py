@@ -1,19 +1,24 @@
 import unittest
 import torch
 from evaluation import evaluate_model, evaluate_reasoning_model
+from grpo_data import construct_second_pass_input
 
 class DummyTokenizer:
     pad_token_id = 0
     eos_token_id = 1
-    _map = {'a':2,'b':3,'x':4,'y':5}
-    _rev = {v:k for k,v in _map.items()}
+    _map = {'a': 2, 'b': 3, 'x': 4, 'y': 5}
+    _rev = {v: k for k, v in _map.items()}
+
     def encode(self, text, return_tensors=None, add_special_tokens=False):
-        ids = [self._map[text]]
+        import re
+        clean = re.sub(r"<[^>]+>", "", text)
+        ids = [self._map.get(c, 6) for c in clean if c.isalpha()]
         if return_tensors == 'pt':
             return torch.tensor([ids])
         return ids
+
     def decode(self, tokens):
-        return ''.join(self._rev[t] for t in tokens)
+        return ''.join(self._rev.get(int(t), '?') for t in tokens)
 
 class DummyModel(torch.nn.Module):
     def __init__(self, mapping):
@@ -60,9 +65,14 @@ class EvalTest(unittest.TestCase):
             second_max_length=1,
         )
         self.assertAlmostEqual(score, 1.0)
-        expected = torch.tensor([[2, 4, 1, 2]], dtype=torch.long)
+        expected, _ = construct_second_pass_input(
+            tok,
+            torch.tensor([2], dtype=torch.long),
+            torch.tensor([4], dtype=torch.long),
+            torch.tensor([2], dtype=torch.long),
+        )
         self.assertEqual(len(model.calls), 2)
-        self.assertTrue(torch.equal(model.calls[1], expected))
+        self.assertTrue(torch.equal(model.calls[1][0], expected))
 
 
 class ReasoningEvalTest(unittest.TestCase):

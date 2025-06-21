@@ -4,6 +4,7 @@ from llama_model import LlamaModel
 from grpo_data import (
     load_qa_dataset,
     construct_second_pass_input,
+    build_layer1_prompt,
 )
 from reward_utils import qa_reward, accuracy_reward
 
@@ -11,7 +12,8 @@ from reward_utils import qa_reward, accuracy_reward
 def generate_response(
     model, tokenizer, query: str, max_length: int, return_tokens: bool = False
 ) -> str | tuple[torch.Tensor, str]:
-    tokens = tokenizer.encode(query, return_tensors="pt")
+    prompt = build_layer1_prompt(query)
+    tokens = tokenizer.encode(prompt, return_tensors="pt")
     out = model.generate(tokens, max_length=tokens.size(1) + max_length, do_sample=False)
     resp_tokens = out[0, tokens.size(1):]
     text = tokenizer.decode(resp_tokens.tolist())
@@ -36,22 +38,20 @@ def evaluate_model(
             tokenizer.encode(guiding_prompt, add_special_tokens=False),
             dtype=torch.long,
         )
-        sep = getattr(tokenizer, "sep_token_id", None)
-        if sep is None:
-            sep = getattr(tokenizer, "eos_token_id", 0)
-        sep = int(sep)
     for sample in dataset:
         if two_layer:
             query_tokens = tokenizer.encode(sample["query"], add_special_tokens=False)
-            inp = torch.tensor([query_tokens], dtype=torch.long)
-            out = model.generate(inp, max_length=len(query_tokens) + max_length, do_sample=False)
-            first_resp = out[0, len(query_tokens):]
+            prompt = build_layer1_prompt(sample["query"])
+            inp_tok = tokenizer.encode(prompt, add_special_tokens=False)
+            inp = torch.tensor([inp_tok], dtype=torch.long)
+            out = model.generate(inp, max_length=len(inp_tok) + max_length, do_sample=False)
+            first_resp = out[0, len(inp_tok):]
             q_tokens = torch.tensor(query_tokens, dtype=torch.long)
             sec_inp, sec_len = construct_second_pass_input(
+                tokenizer,
                 q_tokens,
                 first_resp,
                 guidance_tokens,
-                sep,
             )
             gen = model.generate(
                 sec_inp.unsqueeze(0),
@@ -87,24 +87,22 @@ def evaluate_reasoning_model(
             tokenizer.encode(guiding_prompt, add_special_tokens=False),
             dtype=torch.long,
         )
-        sep = getattr(tokenizer, "sep_token_id", None)
-        if sep is None:
-            sep = getattr(tokenizer, "eos_token_id", 0)
-        sep = int(sep)
     for sample in dataset:
         query_tokens = tokenizer.encode(sample["query"], add_special_tokens=False)
-        inp = torch.tensor([query_tokens], dtype=torch.long)
-        out = model.generate(inp, max_length=len(query_tokens) + max_length, do_sample=False)
-        first_resp = out[0, len(query_tokens):]
+        prompt = build_layer1_prompt(sample["query"])
+        inp_tok = tokenizer.encode(prompt, add_special_tokens=False)
+        inp = torch.tensor([inp_tok], dtype=torch.long)
+        out = model.generate(inp, max_length=len(inp_tok) + max_length, do_sample=False)
+        first_resp = out[0, len(inp_tok):]
         first_text = tokenizer.decode(first_resp.tolist())
         first_ok = bool(accuracy_reward(first_text, sample["answer"]))
         if two_layer:
             q_tokens = torch.tensor(query_tokens, dtype=torch.long)
             sec_inp, sec_len = construct_second_pass_input(
+                tokenizer,
                 q_tokens,
                 first_resp,
                 guidance_tokens,
-                sep,
             )
             gen = model.generate(
                 sec_inp.unsqueeze(0),
