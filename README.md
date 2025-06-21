@@ -159,7 +159,9 @@ second pass.
 
 `evaluation.py` compares a CE fine‑tuned model to a GRPO model using the same QA
 F1 reward as training.  The dataset format matches the GRPO training set
-(`{ "query": ..., "answer": ... }`).
+(`{ "query": ..., "answer": ... }`). When a record includes a `reasoning` field the
+script also reports token level F1 for the text inside `<think>` tags and a
+`step_correctness` metric measuring how many reasoning steps match the reference.
 
 ```bash
 python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_model

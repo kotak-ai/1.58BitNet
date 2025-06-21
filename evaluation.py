@@ -82,6 +82,8 @@ def evaluate_reasoning_model(
     correct_second = 0
     changed_ic = 0
     changed_ci = 0
+    tok_f1_sum = 0.0
+    step_acc_sum = 0.0
     if two_layer:
         guidance_tokens = torch.tensor(
             tokenizer.encode(guiding_prompt, add_special_tokens=False),
@@ -114,6 +116,11 @@ def evaluate_reasoning_model(
         else:
             final_text = first_text
         second_ok = bool(accuracy_reward(final_text, sample["answer"]))
+        ref_reasoning = sample.get("reasoning")
+        if ref_reasoning is not None:
+            from reward_utils import reasoning_token_f1, step_correctness
+            tok_f1_sum += reasoning_token_f1(final_text, ref_reasoning)
+            step_acc_sum += step_correctness(final_text, ref_reasoning)
 
         correct_first += first_ok
         correct_second += second_ok
@@ -123,12 +130,16 @@ def evaluate_reasoning_model(
             changed_ci += 1
 
     N = len(dataset)
-    return {
+    metrics = {
         "accuracy_t1": correct_first / N,
         "accuracy_t2": correct_second / N,
         "delta_i2c": changed_ic / N,
         "delta_c2i": changed_ci / N,
     }
+    if tok_f1_sum:
+        metrics["reasoning_token_f1"] = tok_f1_sum / N
+        metrics["step_correctness"] = step_acc_sum / N
+    return metrics
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
