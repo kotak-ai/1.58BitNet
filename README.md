@@ -79,6 +79,8 @@ Optional features:
 
 - `--config FILE` &ndash; JSON file with argument defaults (e.g. `guiding_prompt`).
 - `--two_layer` &ndash; enable the two stage trainer with self-correction.
+- `--augmentation_size` &ndash; number of corrected answers sampled for each
+  initial response when self-correction is enabled.
 - `--csv_log LOG.csv` &ndash; append metrics to a CSV file. When `--two_layer` is
   active the log also includes up to three `corrected_n` columns with corrected
   answers for inspection.
@@ -176,8 +178,9 @@ The second pass uses the same template as training with `<think>` tags.  The
 guiding prompt text defaults to "Review and correct the answer:" but may be
 overridden or loaded from a file.  Customize the prompt with `--guiding_prompt`
 and use
-`--second_max_length` to control how many tokens are generated for the
-correction.
+`--second_max_length` controls the number of tokens generated for each
+correction. Use `--augmentation_size` to sample multiple corrections per
+response.
 
 Helper loader functions such as `load_math_dataset` rely on the
 `datasets` library. They now accept an optional `path` argument for

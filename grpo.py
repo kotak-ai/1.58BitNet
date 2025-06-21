@@ -172,43 +172,39 @@ class MultiLayerGRPOTrainer:
             q_tokens = queries[b, : query_lengths[b]]
             for g in range(G):
                 resp = responses[b, g, : lengths[b, g]]
-                guidance = random.choice(self.guidance_tokens)
-                inp, inp_len = construct_second_pass_input(
-                    self.tokenizer,
-                    q_tokens,
-                    resp,
-                    guidance,
-                )
-                with torch.no_grad():
-                    gen = self.layer2.model.generate(
-                        inp.unsqueeze(0),
-                        max_length=inp_len + self.second_max_length,
-                        do_sample=True,
-                    )
-                new_resp = gen[0, inp_len:]
-                text = self.tokenizer.decode(new_resp.tolist())
-                reward_val = float(self.reward_fn(text))
-                # count improvement relative to the original reward using verifier
                 base_reward = float(rewards[b, g])
-                if self.verifier is None:
-                    improved = reward_val > base_reward
-                else:
-                    improved = bool(self.verifier(reward_val, base_reward))
-                if improved:
-                    success += 1
+                for _ in range(self.augmentation_size):
+                    guidance = random.choice(self.guidance_tokens)
+                    inp, inp_len = construct_second_pass_input(
+                        self.tokenizer,
+                        q_tokens,
+                        resp,
+                        guidance,
+                    )
+                    with torch.no_grad():
+                        gen = self.layer2.model.generate(
+                            inp.unsqueeze(0),
+                            max_length=inp_len + self.second_max_length,
+                            do_sample=True,
+                        )
+                    new_resp = gen[0, inp_len:]
+                    text = self.tokenizer.decode(new_resp.tolist())
+                    reward_val = float(self.reward_fn(text))
+                    if self.verifier is None:
+                        improved = reward_val > base_reward
+                    else:
+                        improved = bool(self.verifier(reward_val, base_reward))
+                    if improved:
+                        success += 1
+                        if len(log_text_list) < log_texts:
+                            log_text_list.append(text)
                     corrected.append(new_resp)
                     corrected_len.append(new_resp.numel())
                     corrected_rewards.append(reward_val)
                     corrected_adv.append(reward_val - base_reward)
                     corrected_queries.append(queries[b])
-                    if len(log_text_list) < log_texts:
-                        log_text_list.append(text)
+                    total_attempts += 1
                         
-        if not corrected:
-            if log_texts:
-                return loss1, 0.0, log_text_list
-            return loss1, 0.0
-            
         max_len = max(corrected_len)
         corr_tensor = torch.full(
             (len(corrected), 1, max_len), self.pad_id, dtype=torch.long
@@ -227,6 +223,7 @@ class MultiLayerGRPOTrainer:
             optimizer,
             advantages=corr_adv,
         )
+        denom = B * G * self.augmentation_size
         if log_texts:
-            return loss1 + loss2, float(success) / (B * G), log_text_list
-        return loss1 + loss2, float(success) / (B * G)
+            return loss1 + loss2, float(success) / denom, log_text_list
+        return loss1 + loss2, float(success) / denom
