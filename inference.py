@@ -4,23 +4,11 @@ import torch.nn as nn
 from transformers import AutoTokenizer
 from transformers.activations import ACT2FN
 from llama_model import LlamaModel
-from quantization_utils import activation_norm_quant, gemm_lowbit
+
 import time
 import psutil
 
 ACT2FN["llamamlp"] = lambda x: x * torch.sigmoid(x)
-
-class BitLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True):
-        super(BitLinear, self).__init__(in_features, out_features, bias)
-        self.weight_scale = None
-
-    def forward(self, x):
-        w = self.weight  # a 1.58-bit weight tensor with shape [d, k]
-        w_scale = self.weight_scale  # a full-precision weight scale tensor with shape [1]
-        x_quant, x_scale = activation_norm_quant(x)
-        y = gemm_lowbit(x_quant, w) / w_scale / x_scale
-        return y
 
 
 def load_quantized_model(model_path):
