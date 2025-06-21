@@ -182,6 +182,10 @@ from inference import run
 run("path/to/model", ["Hello"], max_length=20)
 ```
 
+Models saved with `LlamaModel.save_pretrained` contain quantised weights.
+The inference script automatically loads these packed tensors without
+additional steps.
+
 ## Transformers Compatibility
 
 `data_loading_compatibility.py` demonstrates loading a checkpoint with
