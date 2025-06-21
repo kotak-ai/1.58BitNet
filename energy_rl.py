@@ -104,3 +104,17 @@ def train(agent: QLearningAgent, episodes=10, max_steps=50):
             if done:
                 break
     return agent
+
+
+def evaluate(agent: QLearningAgent, episodes: int = 5, max_steps: int = 50) -> float:
+    """Run episodes using the greedy policy and return the average reward."""
+    total = 0.0
+    for _ in range(episodes):
+        state = agent.env.reset()
+        for _ in range(max_steps):
+            action = int(np.argmax(agent.q_table[state]))
+            state, reward, done = agent.env.step(action)
+            total += reward
+            if done:
+                break
+    return total / episodes
