@@ -187,7 +187,8 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
         save_checkpoint(model, optimizer, iters, resume)
     return model
 
-if __name__ == "__main__":
+def get_arg_parser() -> argparse.ArgumentParser:
+    """Return the command line argument parser for the training script."""
     parser = argparse.ArgumentParser(description="Fine-tuning script.")
     parser.add_argument("--dataset", type=str, help="Path to the dataset file.")
     parser.add_argument("--model_path", type=str, required=True, help="Path to the pre-trained model.")
@@ -204,9 +205,11 @@ if __name__ == "__main__":
     parser.add_argument("--grad_accum_steps", type=int, default=1, help="Number of steps for gradient accumulation.")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint to resume from")
     parser.add_argument("--save_interval", type=int, default=0, help="Steps between checkpoint saves")
+    return parser
 
-    args = parser.parse_args()
 
+def run(args: argparse.Namespace):
+    """Execute training based on ``args`` from :func:`get_arg_parser`."""
     file_format = args.dataset.split(".")[-1]
     dataset = preprocess_dataset(args.dataset, file_format)
 
@@ -244,3 +247,14 @@ if __name__ == "__main__":
         save_interval=args.save_interval,
     )
     model.save_pretrained(args.output_dir)
+    return model
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = get_arg_parser()
+    args = parser.parse_args(argv)
+    run(args)
+
+
+if __name__ == "__main__":
+    main()

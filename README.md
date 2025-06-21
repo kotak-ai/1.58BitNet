@@ -53,7 +53,9 @@ the stored shape. Config and tokenizer files are stored alongside these.
 
 `trainingv2.py` performs standard CE training on tokenised text datasets.  The
 file may be plain text or a JSON/JSONL file containing a `text` field.  Each
-line or record is treated as one training example.
+line or record is treated as one training example. Pass `--save_interval` to
+periodically checkpoint training and `--resume` to continue from a saved
+checkpoint.
 
 ```bash
 python trainingv2.py --dataset path/to/data.jsonl --model_path path/to/model --output_dir ce_out --iters 1000
@@ -124,7 +126,9 @@ Training large models is memory intensive. The scripts are tested on Apple MPS w
 Example command for a small CE run:
 
 ```bash
-python trainingv2.py --dataset data/train.jsonl --model_path llama_750m --output_dir ce_model --iters 10000 --batch_size 8
+python trainingv2.py --dataset data/train.jsonl --model_path llama_750m \
+    --output_dir ce_model --iters 10000 --batch_size 8 \
+    --resume ce_model/ce.ckpt --save_interval 1000
 ```
 
 Example command for GRPO with two reward models:
