@@ -144,15 +144,16 @@ The correction prompt follows the template:
 <user>{query}<think>{first_answer}</think>{guiding_prompt}</user><assistant>
 ```
 
-`--guiding_prompt` may also be a path to a text or JSON file containing multiple prompts. One of these prompts will be chosen at random for each correction.
+`--guiding_prompt` may be a path to a text or JSON file containing multiple
+prompts. One of these prompts is randomly selected for each correction.
 
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
     --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 \
-    --output_dir grpo_model --two_layer --guiding_prompt "Review and correct the answer:"
+    --output_dir grpo_model --two_layer --guiding_prompt prompts.txt
 ```
-`--guiding_prompt` also accepts a path to a text or JSON file containing multiple
-prompts. One of these prompts will be chosen at random for each correction.
+Here `prompts.txt` contains one prompt per line (or a JSON list) used for the
+second pass.
 
 ## Evaluation
 

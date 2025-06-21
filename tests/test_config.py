@@ -42,6 +42,21 @@ class ConfigTest(unittest.TestCase):
         update_args_with_config(args, parser)
         self.assertEqual(args.guiding_prompt, ["one", "two"])
 
+    def test_guiding_prompt_cli_file(self):
+        parser = get_arg_parser()
+        with open("cli_prompts.txt", "w", encoding="utf-8") as f:
+            f.write("a\nb\n")
+        args = parser.parse_args([
+            "--dataset",
+            "d.json",
+            "--model_path",
+            "m",
+            "--guiding_prompt",
+            "cli_prompts.txt",
+        ])
+        update_args_with_config(args, parser)
+        self.assertEqual(args.guiding_prompt, ["a", "b"])
+
     def test_multiple_reward_models_cli(self):
         parser = get_arg_parser()
         args = parser.parse_args([
