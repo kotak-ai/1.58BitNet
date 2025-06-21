@@ -10,7 +10,7 @@ from llama_model import LlamaModel
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 from grpo_data import load_qa_dataset, build_grpo_batch, f1_reward
 from reward_utils import qa_reward
-from reward_model import RewardModel
+from reward_model import RewardModel, load_reward_models
 from training_utils import save_checkpoint, load_checkpoint, cosine_lr_wd
 
 try:  # progress bar is optional
@@ -138,8 +138,16 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reward_model",
         type=str,
+        nargs="+",
         default=None,
-        help="Path to RewardModel checkpoint (use F1 reward if not set)",
+        help="Path(s) to RewardModel checkpoint(s) (use F1 reward if not set)",
+    )
+    parser.add_argument(
+        "--reward_weights",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Optional weights for each reward model",
     )
     parser.add_argument("--log_interval", type=int, default=10, help="Steps between logging metrics")
     parser.add_argument(
@@ -206,9 +214,11 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
     if args.reward_model:
-        reward_model = RewardModel.load(args.reward_model, tokenizer)
-        def reward_fn(gen: str, ref: str, query: str) -> float:
-            return reward_model.score(query, gen)
+        reward_fn = load_reward_models(
+            args.reward_model,
+            tokenizer,
+            weights=args.reward_weights,
+        )
     else:
         def reward_fn(gen: str, ref: str, query: str) -> float:
             return qa_reward(gen, ref)
