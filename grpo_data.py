@@ -39,11 +39,18 @@ def build_layer1_prompt(query: str, system_prompt: str | None = None) -> str:
 
 def build_layer2_prompt(
     query: str,
-    answer: str,
+    full_response: str,
     guidance: str,
     system_prompt: str | None = None,
 ) -> str:
-    """Return the text prompt for the second GRPO layer."""
+    """Return the text prompt for the second GRPO layer.
+    
+    Args:
+        query: The original user query
+        full_response: The complete Layer 1 response including <think> tags and answer
+        guidance: The guiding prompt for correction
+        system_prompt: Optional custom system prompt
+    """
     if system_prompt is None:
         system_prompt = (
             "You are a helpful AI assistant tasked with reviewing and correcting solutions.\n"
@@ -52,7 +59,8 @@ def build_layer2_prompt(
         )
     parts = []
     parts.append(f"<|im_start|>system\n{system_prompt}\n<|im_end|>")
-    parts.append(f"<|im_start|>user\n{query}\n<|im_start|>assistant\n<think>{answer}</think>\n{guidance}\n<|im_end|>")
+    parts.append(f"<|im_start|>user\n{query}\n<|im_end|>")
+    parts.append(f"<|im_start|>assistant\n{full_response}\n{guidance}\n<|im_end|>")
     parts.append("<|im_start|>assistant")
     return "\n".join(parts)
 
