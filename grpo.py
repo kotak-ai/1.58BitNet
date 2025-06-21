@@ -111,6 +111,7 @@ class MultiLayerGRPOTrainer:
         beta: float = 0.01,
         verifier: Callable[[float, float], bool] | None = None,
         second_max_length: int = 20,
+         augmentation_size: int = 1,
     ):
         self.layer1 = GRPOTrainer(model, ref_model, clip_eps, beta)
         self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta)
@@ -135,6 +136,7 @@ class MultiLayerGRPOTrainer:
         self.pad_id = pad_id
         self.verifier = verifier
         self.second_max_length = second_max_length
+        self.augmentation_size = augmentation_size
 
     def train_batch(
         self,
@@ -164,6 +166,8 @@ class MultiLayerGRPOTrainer:
         corrected_queries = []
         log_text_list: list[str] = []
         success = 0
+        total_attempts = 0
+        
         for b in range(B):
             q_tokens = queries[b, : query_lengths[b]]
             for g in range(G):
@@ -199,10 +203,12 @@ class MultiLayerGRPOTrainer:
                     corrected_queries.append(queries[b])
                     if len(log_text_list) < log_texts:
                         log_text_list.append(text)
+                        
         if not corrected:
             if log_texts:
                 return loss1, 0.0, log_text_list
             return loss1, 0.0
+            
         max_len = max(corrected_len)
         corr_tensor = torch.full(
             (len(corrected), 1, max_len), self.pad_id, dtype=torch.long
