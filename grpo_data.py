@@ -40,11 +40,17 @@ def load_qa_dataset(path: str) -> List[Dict[str, str]]:
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 obj = json.loads(line)
-                data.append({'query': obj['query'], 'answer': obj['answer']})
+                rec = {'query': obj['query'], 'answer': obj['answer']}
+                if 'reasoning' in obj:
+                    rec['reasoning'] = obj['reasoning']
+                data.append(rec)
     elif path.endswith('.json'):
         with open(path, 'r', encoding='utf-8') as f:
             for obj in json.load(f):
-                data.append({'query': obj['query'], 'answer': obj['answer']})
+                rec = {'query': obj['query'], 'answer': obj['answer']}
+                if 'reasoning' in obj:
+                    rec['reasoning'] = obj['reasoning']
+                data.append(rec)
     else:
         raise ValueError('Unsupported dataset format')
     return data

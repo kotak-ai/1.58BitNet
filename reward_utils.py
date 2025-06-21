@@ -112,6 +112,39 @@ def accuracy_reward(generated: str, reference: str) -> float:
     return float(extract_final_answer(generated) == extract_final_answer(reference))
 
 
+def extract_reasoning(text: str) -> str:
+    """Return reasoning text extracted from ``<think>`` tags if available."""
+    m = re.search(r"<think>(.*?)</think>", text, flags=re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # Fall back to prefix before the final answer heuristically
+    parts = re.split(r"\d", text, maxsplit=1)
+    if parts:
+        return parts[0].strip()
+    return ""
+
+
+def reasoning_token_f1(generated: str, reference_reasoning: str) -> float:
+    """Compute F1 of tokens in the generated reasoning against the reference."""
+    reasoning = extract_reasoning(generated)
+    return f1_score(reasoning, reference_reasoning)
+
+
+def _split_steps(text: str) -> list[str]:
+    steps = re.split(r"[.;\n]+", _normalize(text))
+    return [s for s in (step.strip() for step in steps) if s]
+
+
+def step_correctness(generated: str, reference_reasoning: str) -> float:
+    """Return the fraction of reasoning steps that match the reference."""
+    pred_steps = _split_steps(extract_reasoning(generated))
+    ref_steps = _split_steps(reference_reasoning)
+    if not ref_steps:
+        return float(not pred_steps)
+    matches = sum(1 for p, r in zip(pred_steps, ref_steps) if p == r)
+    return matches / len(ref_steps)
+
+
 class RewardModelScorer:
     """Use a sequence classification model to score responses."""
 

@@ -1,0 +1,4 @@
+[
+  {"query": "Q1", "reasoning": "step one. step two.", "answer": "42"},
+  {"query": "Q2", "reasoning": "first step; second step", "answer": "yes"}
+]

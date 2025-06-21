@@ -114,5 +114,21 @@ class ReasoningEvalTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["accuracy_t2"], 1.0)
         self.assertAlmostEqual(metrics["delta_i2c"], 1.0)
 
+    def test_reasoning_scores(self):
+        data = [{"query": "a", "answer": "42", "reasoning": "xy"}]
+        class Tok(DummyTokenizer):
+            _map = {'a':2,'x':4,'y':5,'4':6,'2':7}
+            _rev = {v:k for k,v in _map.items()}
+        tok = Tok()
+
+        class Model(torch.nn.Module):
+            def generate(self, inp, max_length, do_sample=False):
+                out = tok.encode("<think>xy</think>42")
+                return torch.tensor([inp[0].tolist() + out])
+
+        metrics = evaluate_reasoning_model(Model(), tok, data, 4)
+        self.assertAlmostEqual(metrics["reasoning_token_f1"], 1.0)
+        self.assertAlmostEqual(metrics["step_correctness"], 1.0)
+
 if __name__ == '__main__':
     unittest.main()
