@@ -1,8 +1,24 @@
 import json
 import random
 import torch
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Optional
 from reward_utils import qa_reward
+
+
+def _load_split_dataset(name: str, split: str, path: Optional[str] = None):
+    """Return dataset ``split`` from ``path`` or ``name`` with friendly errors."""
+    from datasets import load_dataset
+
+    ds_id = path or name
+    try:
+        return load_dataset(ds_id, split=split)
+    except Exception as exc:
+        msg = (
+            f"Failed to load dataset '{ds_id}'. "
+            "Ensure the path is correct and the dataset is available locally "
+            "or via the Hugging Face hub."
+        )
+        raise RuntimeError(msg) from exc
 
 
 def build_layer1_prompt(query: str, system_prompt: str | None = None) -> str:
@@ -56,35 +72,27 @@ def load_qa_dataset(path: str) -> List[Dict[str, str]]:
     return data
 
 
-def load_math_dataset(split: str = "test[:500]") -> List[Dict[str, str]]:
+def load_math_dataset(split: str = "test[:500]", path: Optional[str] = None) -> List[Dict[str, str]]:
     """Load the MATH benchmark via the :mod:`datasets` library."""
-    from datasets import load_dataset
-
-    ds = load_dataset("hendrycks/math", split=split)
+    ds = _load_split_dataset("hendrycks/math", split, path)
     return [{"query": x["problem"], "answer": x["solution"]} for x in ds]
 
 
-def load_gsm8k_dataset(split: str = "test") -> List[Dict[str, str]]:
+def load_gsm8k_dataset(split: str = "test", path: Optional[str] = None) -> List[Dict[str, str]]:
     """Load the GSM8K dataset."""
-    from datasets import load_dataset
-
-    ds = load_dataset("openai/gsm8k", "main", split=split)
+    ds = _load_split_dataset("openai/gsm8k", split, path)
     return [{"query": x["question"], "answer": x["answer"]} for x in ds]
 
 
-def load_minerva_math_dataset(split: str = "test") -> List[Dict[str, str]]:
+def load_minerva_math_dataset(split: str = "test", path: Optional[str] = None) -> List[Dict[str, str]]:
     """Load the Minerva Math dataset used in the paper."""
-    from datasets import load_dataset
-
-    ds = load_dataset("knoveleng/Minerva-Math", split=split)
+    ds = _load_split_dataset("knoveleng/Minerva-Math", split, path)
     return [{"query": x["problem"], "answer": x["solution"]} for x in ds]
 
 
-def load_olympiadbench_dataset(split: str = "test") -> List[Dict[str, str]]:
+def load_olympiadbench_dataset(split: str = "test", path: Optional[str] = None) -> List[Dict[str, str]]:
     """Load the OlympiadBench dataset."""
-    from datasets import load_dataset
-
-    ds = load_dataset("lmms-lab/OlympiadBench", split=split)
+    ds = _load_split_dataset("lmms-lab/OlympiadBench", split, path)
     return [{"query": x["problem"], "answer": x["solution"]} for x in ds]
 
 

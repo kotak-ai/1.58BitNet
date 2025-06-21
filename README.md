@@ -179,6 +179,11 @@ and use
 `--second_max_length` to control how many tokens are generated for the
 correction.
 
+Helper loader functions such as `load_math_dataset` rely on the
+`datasets` library. They now accept an optional `path` argument for
+loading a local copy instead of downloading from the Hugging Face hub.
+If a dataset cannot be loaded a readable `RuntimeError` is raised.
+
 ## Inference
 
 `inference.py` generates text from a saved model. Provide one or more prompts on

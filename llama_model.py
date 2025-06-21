@@ -97,8 +97,8 @@ def apply_rotary_pos_emb(q, k, cos, sin):
     q = q.view(batch_size, seq_length, -1, head_dim)
     k = k.view(batch_size, seq_length, -1, head_dim)
 
-    cos = cos.unsqueeze(1).unsqueeze(0)
-    sin = sin.unsqueeze(1).unsqueeze(0)
+    cos = cos.unsqueeze(1)
+    sin = sin.unsqueeze(1)
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -281,8 +281,9 @@ class LlamaModel(nn.Module):
 
             if do_sample:
                 if top_k is not None and top_k > 0:
-                    values, indices = torch.topk(next_token_logits, top_k)
-                    logits_mask = torch.full_like(next_token_logits, float('-inf'))
+                    k = min(int(top_k), next_token_logits.size(-1))
+                    values, indices = torch.topk(next_token_logits, k)
+                    logits_mask = torch.full_like(next_token_logits, float("-inf"))
                     logits_mask.scatter_(-1, indices, values)
                     next_token_logits = logits_mask
 
@@ -331,11 +332,16 @@ class LlamaModel(nn.Module):
         # Generate cos and sin values if not provided
         if cos is None or sin is None:
             seq_length = input_ids.size(1)
-            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
-            position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
-            position_embeddings = self.embed_positions(position_ids)
-            cos = position_embeddings[..., 0::2].cos()
-            sin = position_embeddings[..., 1::2].sin()
+            head_dim = self.config.hidden_size // self.config.num_attention_heads
+            position_ids = torch.arange(seq_length, device=input_ids.device)
+            cos = torch.zeros(seq_length, head_dim, device=input_ids.device)
+            sin = torch.zeros(seq_length, head_dim, device=input_ids.device)
+            div_term = torch.exp(
+                torch.arange(0, head_dim, 2, device=input_ids.device)
+                * (-torch.log(torch.tensor(10000.0)) / head_dim)
+            )
+            cos[:, 0::2] = torch.cos(position_ids[:, None] * div_term)
+            sin[:, 1::2] = torch.sin(position_ids[:, None] * div_term)
 
         for layer in self.layers:
             hidden_states = layer(hidden_states, attention_mask, cos, sin)
