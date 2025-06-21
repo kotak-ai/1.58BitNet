@@ -23,11 +23,19 @@ def _load_split_dataset(name: str, split: str, path: Optional[str] = None):
 
 def build_layer1_prompt(query: str, system_prompt: str | None = None) -> str:
     """Return the text prompt for the first GRPO layer."""
+    if system_prompt is None:
+        system_prompt = (
+            "You are an AI assistant. A conversation between User and Assistant.\n"
+            "The User asks a question, and the Assistant solves it step-by-step.\n"
+            "The Assistant must first output a detailed step-by-step reasoning process enclosed within "
+            "<think></think> tags. After the </think> tag, the Assistant must provide the final answer "
+            "based on the reasoning."
+        )
     parts = []
-    if system_prompt:
-        parts.append(f"<system>{system_prompt}</system>")
-    parts.append(f"<user>{query}</user><assistant>")
-    return "".join(parts)
+    parts.append(f"<|im_start|>system\n{system_prompt}\n<|im_end|>")
+    parts.append(f"<|im_start|>user\n{query}\n<|im_end|>")
+    parts.append("<|im_start|>assistant")
+    return "\n".join(parts)
 
 
 def build_layer2_prompt(
