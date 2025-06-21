@@ -18,7 +18,15 @@ device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 def download_dataset(dataset_path):
     if dataset_path.startswith("https://huggingface.co/datasets/"):
         dataset_path = dataset_path.split("/")[-1]
-    dataset = load_dataset(dataset_path)
+    try:
+        dataset = load_dataset(dataset_path)
+    except Exception as exc:
+        msg = (
+            f"Failed to load dataset '{dataset_path}'. "
+            "Ensure the path is correct and the dataset is available locally "
+            "or via the Hugging Face hub."
+        )
+        raise RuntimeError(msg) from exc
     return dataset
 
 def preprocess_dataset(file_path, file_format):
