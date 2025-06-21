@@ -133,7 +133,14 @@ python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model r
 
 ## Two-Layer Self-Correction
 
-Passing `--two_layer` enables a second GRPO pass that attempts to refine the first answer. The second pass concatenates the query, the original answer and the text from `--guiding_prompt` (separated by the tokenizer's `sep_token_id` or `eos_token_id`) before generating the correction.
+Passing `--two_layer` enables a second GRPO pass that attempts to refine the first answer.
+The correction prompt follows the template:
+
+```
+<user>{query}<think>{first_answer}</think>{guiding_prompt}</user><assistant>
+```
+
+`--guiding_prompt` may also be a path to a text or JSON file containing multiple prompts. One of these prompts will be chosen at random for each correction.
 
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m --reward_model rm.ckpt --output_dir grpo_model --two_layer --guiding_prompt "Review and correct the answer:"
@@ -152,11 +159,10 @@ python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_mo
 ```
 
 Passing `--two_layer` runs a second correction pass before scoring each answer.
-The correction concatenates the query, the first answer and the text from
-`--guiding_prompt` (default "Review and correct the answer:") before generating
-the final response.  `--guiding_prompt` may point to a file with several prompts;
-one will be chosen randomly for every correction.  Customize the prompt with
-`--guiding_prompt` and use
+The second pass uses the same template as training with `<think>` tags.  The
+guiding prompt text defaults to "Review and correct the answer:" but may be
+overridden or loaded from a file.  Customize the prompt with `--guiding_prompt`
+and use
 `--second_max_length` to control how many tokens are generated for the
 correction.
 
