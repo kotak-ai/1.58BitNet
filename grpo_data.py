@@ -37,7 +37,6 @@ def build_layer1_prompt(query: str, system_prompt: str | None = None) -> str:
     parts.append("<|im_start|>assistant")
     return "\n".join(parts)
 
-
 def build_layer2_prompt(
     query: str,
     answer: str,
@@ -45,11 +44,17 @@ def build_layer2_prompt(
     system_prompt: str | None = None,
 ) -> str:
     """Return the text prompt for the second GRPO layer."""
+    if system_prompt is None:
+        system_prompt = (
+            "You are a helpful AI assistant tasked with reviewing and correcting solutions.\n"
+            "The User will provide a problem and an attempted solution. Your job is to identify any errors "
+            "and provide a corrected solution if needed. Always show your reasoning process."
+        )
     parts = []
-    if system_prompt:
-        parts.append(f"<system>{system_prompt}</system>")
-    parts.append(f"<user>{query}<think>{answer}</think>{guidance}</user><assistant>")
-    return "".join(parts)
+    parts.append(f"<|im_start|>system\n{system_prompt}\n<|im_end|>")
+    parts.append(f"<|im_start|>user\n{query}\n<|im_start|>assistant\n<think>{answer}</think>\n{guidance}\n<|im_end|>")
+    parts.append("<|im_start|>assistant")
+    return "\n".join(parts)
 
 
 def f1_reward(generated: str, reference: str, query: str) -> float:
@@ -160,7 +165,6 @@ def build_grpo_batch(
     reward_tensor = torch.tensor(rewards, dtype=torch.float)
     return queries, q_lens, resp_tensor, len_tensor, reward_tensor
 
-
 def construct_second_pass_input(
     tokenizer,
     query_tokens: torch.Tensor,
@@ -169,11 +173,18 @@ def construct_second_pass_input(
     system_prompt: str | None = None,
 ) -> (torch.Tensor, int):
     """Return tokens for the layer-2 prompt based on ``query_tokens`` and ``output_tokens``."""
-
     query_text = tokenizer.decode(query_tokens.tolist())
     output_text = tokenizer.decode(output_tokens.tolist())
     guidance_text = tokenizer.decode(guidance_tokens.tolist())
+    
+    # Use Layer 2 specific system prompt
+    if system_prompt is None:
+        system_prompt = (
+            "You are a helpful AI assistant tasked with reviewing and correcting solutions.\n"
+            "The User will provide a problem or a question, and an attempted solution. Your job is to identify any errors "
+            "and provide a corrected solution if needed. Always show your reasoning process."
+        )
+    
     prompt = build_layer2_prompt(query_text, output_text, guidance_text, system_prompt)
     ids = tokenizer.encode(prompt, add_special_tokens=False)
     return torch.tensor(ids, dtype=torch.long), len(ids)
-
