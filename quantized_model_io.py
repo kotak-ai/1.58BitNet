@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import torch
 
 try:
@@ -27,7 +28,9 @@ def quantize_state_dict(state_dict: dict[str, torch.Tensor]):
         packed, shape = pack_quantized_tensor(q)
         quantized[name] = packed
         quantized[name + ".shape"] = shape
-        size = packed.numel() * packed.element_size() + shape.numel() * shape.element_size()
+        # Approximate byte size assuming 1.58 bits per value plus shape overhead
+        numel = param.numel()
+        size = math.ceil(numel * 1.58 / 8) + shape.numel() * shape.element_size()
         total_size += size
         weight_map[name] = "model.safetensors"
         weight_map[name + ".shape"] = "model.safetensors"

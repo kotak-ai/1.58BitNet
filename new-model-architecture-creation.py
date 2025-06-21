@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from transformers import LlamaConfig
@@ -133,19 +134,18 @@ def quantize_activations(model):
 
 # Modify the calculate_model_size function
 def calculate_model_size(model):
-    def get_size(tensor):
-        element_size = tensor.element_size()
-        num_elements = tensor.numel()
-        return element_size * num_elements
+    def get_quant_size(tensor):
+        # Bytes required when quantised to 1.58 bits plus shape metadata
+        return math.ceil(tensor.numel() * 1.58 / 8) + tensor.dim() * 4
 
     model_size = 0
     for name, param in model.named_parameters():
         if args.e and ('embed_tokens' in name or 'norm' in name):
-            model_size += get_size(param) // 8  # Quantize to 1.58 bits
+            model_size += get_quant_size(param)
         elif 'weight' in name and isinstance(param, torch.Tensor) and 'lm_head' not in name:
-            model_size += get_size(param) // 8  # Assuming 1.58-bit quantization for weights
+            model_size += get_quant_size(param)
         else:
-            model_size += get_size(param)  # Other parameters in full precision
+            model_size += param.element_size() * param.numel()
 
     return model_size
 

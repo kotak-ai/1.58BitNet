@@ -45,8 +45,9 @@ python new-model-architecture-creation.py --params 750M --output_dir llama_750M
 Each tensor from the model `state_dict` is saved with a `model.` prefix and a
 matching `<name>.shape` entry holding the original dimensions.  The accompanying
 `model.safetensors.index.json` lists the tensor names and includes a
-`metadata.total_size` field giving the total byte size.  Config and tokenizer
-files are stored alongside these.
+`metadata.total_size` field giving the total byte size.  The byte count is
+calculated using `numel * 1.58 / 8` for each tensor, with a small overhead for
+the stored shape. Config and tokenizer files are stored alongside these.
 
 ## Cross‑Entropy Training
 
