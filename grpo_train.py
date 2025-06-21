@@ -4,6 +4,7 @@ import random
 import logging
 import csv
 import os
+from typing import List
 import torch
 from llama_model import LlamaModel
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
@@ -44,6 +45,29 @@ def pad_sequences(seqs, pad_id):
         tensor[i, :len(s)] = torch.tensor(s, dtype=torch.long)
         lengths[i] = len(s)
     return tensor, lengths
+
+
+def parse_guiding_prompts(value: str | list[str]) -> List[str]:
+    """Return a list of guiding prompts from ``value``.
+
+    ``value`` may be a single string, a list of strings, or a path to a text or
+    JSON file containing prompts. JSON files should contain either a single
+    string or a list of strings. Text files are treated as newline separated
+    prompts.
+    """
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, str) and os.path.isfile(value):
+        with open(value, "r", encoding="utf-8") as f:
+            text = f.read()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return [line.strip() for line in text.splitlines() if line.strip()]
+        if isinstance(data, list):
+            return [str(v) for v in data]
+        return [str(data)]
+    return [str(value)]
 
 
 def prepare_batch(samples, tokenizer, model, group_size, max_length, reward_fn=f1_reward):
@@ -128,7 +152,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--guiding_prompt",
         type=str,
         default="Review and correct the answer:",
-        help="Guiding prompt for the second GRPO layer",
+        help="Guiding prompt text or path to a file with one or more prompts",
     )
     parser.add_argument("--progress", action="store_true", help="Show progress bar if tqdm is available")
     return parser
@@ -141,10 +165,7 @@ def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentP
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     if "guiding_prompt" in cfg:
-        gp = cfg["guiding_prompt"]
-        if isinstance(gp, str) and os.path.isfile(gp):
-            with open(gp, "r", encoding="utf-8") as pf:
-                cfg["guiding_prompt"] = pf.read().strip()
+        cfg["guiding_prompt"] = parse_guiding_prompts(cfg["guiding_prompt"])
     for key, value in cfg.items():
         old_default = parser.get_default(key)
         parser.set_defaults(**{key: value})
@@ -160,6 +181,7 @@ def main():
     parser = get_arg_parser()
     args = parser.parse_args()
     update_args_with_config(args, parser)
+    args.guiding_prompt = parse_guiding_prompts(args.guiding_prompt)
 
     logging.basicConfig(
         level=logging.INFO,

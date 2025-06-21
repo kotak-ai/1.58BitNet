@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from typing import List, Tuple, Callable
 
 import copy
+import random
 from grpo_data import construct_second_pass_input
 
 class GRPOTrainer:
@@ -94,6 +95,9 @@ class MultiLayerGRPOTrainer:
         Function used to score corrected responses produced by the second
         layer.  It receives the decoded response text and returns a scalar
         reward value.
+    guiding_prompt : str or list[str]
+        One or more prompts appended during the second pass.  If multiple
+        prompts are provided a random one is chosen for each correction.
     """
 
     def __init__(
@@ -102,7 +106,7 @@ class MultiLayerGRPOTrainer:
         ref_model: nn.Module,
         reward_fn: Callable[[str], float],
         tokenizer,
-        guiding_prompt: str,
+        guiding_prompt: str | list[str],
         clip_eps: float = 0.2,
         beta: float = 0.01,
         verifier: Callable[[float, float], bool] | None = None,
@@ -112,10 +116,15 @@ class MultiLayerGRPOTrainer:
         self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta)
         self.reward_fn = reward_fn
         self.tokenizer = tokenizer
-        self.guidance_tokens = torch.tensor(
-            tokenizer.encode(guiding_prompt, add_special_tokens=False),
-            dtype=torch.long,
-        )
+        if isinstance(guiding_prompt, str):
+            guiding_prompt = [guiding_prompt]
+        self.guidance_tokens = [
+            torch.tensor(
+                tokenizer.encode(p, add_special_tokens=False),
+                dtype=torch.long,
+            )
+            for p in guiding_prompt
+        ]
         sep = getattr(tokenizer, "sep_token_id", None)
         if sep is None:
             sep = getattr(tokenizer, "eos_token_id", 0)
@@ -159,10 +168,11 @@ class MultiLayerGRPOTrainer:
             q_tokens = queries[b, : query_lengths[b]]
             for g in range(G):
                 resp = responses[b, g, : lengths[b, g]]
+                guidance = random.choice(self.guidance_tokens)
                 inp, inp_len = construct_second_pass_input(
                     q_tokens,
                     resp,
-                    self.guidance_tokens,
+                    guidance,
                     self.sep_id,
                 )
                 with torch.no_grad():
