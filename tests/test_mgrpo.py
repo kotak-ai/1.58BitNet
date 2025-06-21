@@ -2,6 +2,7 @@ import torch
 import unittest
 import random
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
+from grpo_train import parse_guiding_prompts
 from grpo_data import construct_second_pass_input
 
 
@@ -348,6 +349,52 @@ class GRPOTest(unittest.TestCase):
             return None
 
         # at least ensure different prompts are chosen
+        self.assertNotEqual(call1.tolist(), call2.tolist())
+
+    def test_random_guiding_prompt_selection_file(self):
+        class RecordingModel(DummyModel):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+
+            def generate(self, inp, max_length, do_sample=True):
+                self.calls.append(inp.clone())
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        with open("file_prompts.txt", "w", encoding="utf-8") as f:
+            f.write("fix\ncheck\n")
+        prompts = parse_guiding_prompts("file_prompts.txt")
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt=prompts,
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        trainer.layer2.step = lambda *args, **kwargs: torch.tensor(0.0)
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), 2, dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        random.seed(0)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        call1 = model.calls[-1][0]
+
+        random.seed(1)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        call2 = model.calls[-1][0]
+
         self.assertNotEqual(call1.tolist(), call2.tolist())
 
 if __name__ == '__main__':

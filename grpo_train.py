@@ -168,17 +168,19 @@ def get_arg_parser() -> argparse.ArgumentParser:
 
 def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Apply configuration from ``args.config`` to ``args`` and parser defaults."""
-    if not getattr(args, "config", None):
-        return
-    with open(args.config, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-    if "guiding_prompt" in cfg:
-        cfg["guiding_prompt"] = parse_guiding_prompts(cfg["guiding_prompt"])
-    for key, value in cfg.items():
-        old_default = parser.get_default(key)
-        parser.set_defaults(**{key: value})
-        if hasattr(args, key) and getattr(args, key) == old_default:
-            setattr(args, key, value)
+    if getattr(args, "config", None):
+        with open(args.config, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        if "guiding_prompt" in cfg:
+            cfg["guiding_prompt"] = parse_guiding_prompts(cfg["guiding_prompt"])
+        for key, value in cfg.items():
+            old_default = parser.get_default(key)
+            parser.set_defaults(**{key: value})
+            if hasattr(args, key) and getattr(args, key) == old_default:
+                setattr(args, key, value)
+
+    # Always normalize the guiding prompt so downstream code receives a list
+    args.guiding_prompt = parse_guiding_prompts(args.guiding_prompt)
 
 
 def simple_improvement_verifier(new_reward: float, old_reward: float, threshold: float = 0.05) -> bool:
@@ -189,7 +191,6 @@ def main():
     parser = get_arg_parser()
     args = parser.parse_args()
     update_args_with_config(args, parser)
-    args.guiding_prompt = parse_guiding_prompts(args.guiding_prompt)
 
     logging.basicConfig(
         level=logging.INFO,
