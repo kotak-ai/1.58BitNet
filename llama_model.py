@@ -449,7 +449,8 @@ class LlamaModel(nn.Module):
             shard_file = f"model-{shard_id:05d}-of-{num_shards:05d}.safetensors"
             for key in state_dict.keys():
                 weight_map[key] = shard_file
-            total_size += sum(v.numel() * v.element_size() for v in state_dict.values())
+            for v in state_dict.values():
+                total_size += math.ceil(v.numel() * 1.58 / 8) + v.dim() * 4
 
         index_data = {
             "metadata": {
