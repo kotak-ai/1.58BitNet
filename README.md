@@ -80,7 +80,8 @@ Optional features:
 - `--config FILE` &ndash; JSON file with argument defaults (e.g. `guiding_prompt`).
 - `--two_layer` &ndash; enable the two stage trainer with self-correction.
 - `--augmentation_size` &ndash; number of corrected answers sampled for each
-  initial response when self-correction is enabled.
+  initial response when self-correction is enabled (the H parameter from the
+  [GRPO paper](https://arxiv.org/pdf/2506.04746)).
 - `--csv_log LOG.csv` &ndash; append metrics to a CSV file. When `--two_layer` is
   active the log also includes up to three `corrected_n` columns with corrected
   answers for inspection.
@@ -180,7 +181,7 @@ overridden or loaded from a file.  Customize the prompt with `--guiding_prompt`
 and use
 `--second_max_length` controls the number of tokens generated for each
 correction. Use `--augmentation_size` to sample multiple corrections per
-response.
+response (the H parameter in the [GRPO paper](https://arxiv.org/pdf/2506.04746)).
 
 Helper loader functions such as `load_math_dataset` rely on the
 `datasets` library. They now accept an optional `path` argument for

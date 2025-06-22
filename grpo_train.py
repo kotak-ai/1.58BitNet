@@ -140,7 +140,10 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--augmentation_size",
         type=int,
         default=1,
-        help="Number of augmented corrections to generate per response (H parameter from paper)",
+        help=(
+            "Number of augmented corrections to generate per response "
+            "when --two_layer is enabled (H parameter from paper)"
+        ),
     )
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=0.1)
