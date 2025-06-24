@@ -80,6 +80,7 @@ def evaluate_reasoning_model(
 
     correct_first = 0
     correct_second = 0
+    correct_second_prime = 0
     changed_ic = 0
     changed_ci = 0
     tok_f1_sum = 0.0
@@ -116,6 +117,7 @@ def evaluate_reasoning_model(
         else:
             final_text = first_text
         second_ok = bool(accuracy_reward(final_text, sample["answer"]))
+        second_prime_ok = second_ok if two_layer else first_ok
         ref_reasoning = sample.get("reasoning")
         if ref_reasoning is not None:
             from reward_utils import reasoning_token_f1, step_correctness
@@ -124,6 +126,7 @@ def evaluate_reasoning_model(
 
         correct_first += first_ok
         correct_second += second_ok
+        correct_second_prime += second_prime_ok
         if not first_ok and second_ok:
             changed_ic += 1
         if first_ok and not second_ok:
@@ -132,7 +135,9 @@ def evaluate_reasoning_model(
     N = len(dataset)
     metrics = {
         "accuracy_t1": correct_first / N,
+        "accuracy_t1_prime": correct_second_prime / N,
         "accuracy_t2": correct_second / N,
+        "delta_t1p_t2": (correct_second / N) - (correct_second_prime / N),
         "delta_i2c": changed_ic / N,
         "delta_c2i": changed_ci / N,
     }
