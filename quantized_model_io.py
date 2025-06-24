@@ -24,11 +24,21 @@ def quantize_state_dict(state_dict: dict[str, torch.Tensor]):
     for name, param in state_dict.items():
         if not isinstance(param, torch.Tensor):
             continue
-        q = quantize_tensor(param)
-        packed, shape = pack_quantized_tensor(q)
+        if param.dtype == torch.uint8 or "weight_scale" in name or param.numel() == 1:
+            quantized[name] = param
+            size = param.numel() * param.element_size()
+            total_size += size
+            weight_map[name] = "model.safetensors"
+            continue
+
+        if param.dtype == torch.int8:
+            packed, shape = pack_quantized_tensor(param)
+        else:
+            q = quantize_tensor(param)
+            packed, shape = pack_quantized_tensor(q)
+
         quantized[name] = packed
         quantized[name + ".shape"] = shape
-        # Approximate byte size assuming 1.58 bits per value plus shape overhead
         numel = param.numel()
         size = math.ceil(numel * 1.58 / 8) + shape.numel() * shape.element_size()
         total_size += size

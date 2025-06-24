@@ -31,6 +31,7 @@ from tqdm import tqdm
 import numpy as np
 import time
 from custom_gradient_checkpointing import custom_checkpoint
+from h_bitlinear import HBitLinear
 
 
 def RMSNorm(x, eps=1e-6):
@@ -116,14 +117,14 @@ def apply_rotary_pos_emb(q, k, cos, sin):
 
 
 class LlamaAttention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, linear_cls=HBitLinear):
         super().__init__()
         self.config = config
         self.head_dim = config.hidden_size // config.num_attention_heads
-        self.q_proj = BitLinear(config.hidden_size, config.hidden_size, bias=False)
-        self.k_proj = BitLinear(config.hidden_size, config.hidden_size, bias=False)
-        self.v_proj = BitLinear(config.hidden_size, config.hidden_size, bias=False)
-        self.o_proj = BitLinear(config.hidden_size, config.hidden_size, bias=False)
+        self.q_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
+        self.k_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
+        self.v_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
+        self.o_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
         self.pretraining_tp = config.pretraining_tp
         self.kv_cache_quant = kv_cache_quant
 
@@ -156,15 +157,15 @@ class LlamaAttention(nn.Module):
 
 
 class LlamaMLP(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, linear_cls=HBitLinear):
         super().__init__()
-        self.gate_proj = BitLinear(
+        self.gate_proj = linear_cls(
             config.hidden_size, config.intermediate_size, bias=False
         )
-        self.down_proj = BitLinear(
+        self.down_proj = linear_cls(
             config.intermediate_size, config.hidden_size, bias=False
         )
-        self.up_proj = BitLinear(
+        self.up_proj = linear_cls(
             config.hidden_size, config.intermediate_size, bias=False
         )
         self.pretraining_tp = config.pretraining_tp
@@ -215,10 +216,10 @@ class LlamaMLP(nn.Module):
 
 
 class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config, experiment=False):
+    def __init__(self, config, experiment=False, linear_cls=HBitLinear):
         super().__init__()
-        self.self_attn = LlamaAttention(config)
-        self.mlp = LlamaMLP(config)
+        self.self_attn = LlamaAttention(config, linear_cls=linear_cls)
+        self.mlp = LlamaMLP(config, linear_cls=linear_cls)
         self.norm1 = nn.LayerNorm(
             config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5)
         )
@@ -256,7 +257,7 @@ class LlamaDecoderLayer(nn.Module):
 
 
 class LlamaModel(nn.Module):
-    def __init__(self, config, experiment=False):
+    def __init__(self, config, experiment=False, linear_cls=HBitLinear):
         super().__init__()
         self.config = config
         self.embed_tokens = QuantizedEmbedding(
@@ -264,7 +265,7 @@ class LlamaModel(nn.Module):
         )
         self.layers = nn.ModuleList(
             [
-                LlamaDecoderLayer(config, experiment=experiment)
+                LlamaDecoderLayer(config, experiment=experiment, linear_cls=linear_cls)
                 for _ in range(config.num_hidden_layers)
             ]
         )
@@ -373,13 +374,13 @@ class LlamaModel(nn.Module):
         return generated
 
     @classmethod
-    def load_pretrained(cls, model_path):
+    def load_pretrained(cls, model_path, linear_cls=HBitLinear):
         if LlamaConfig is None:
             raise ImportError("transformers is required to load pretrained models")
         from quantized_model_io import load_quantized_model
 
         config = LlamaConfig.from_pretrained(model_path)
-        model = cls(config)
+        model = cls(config, linear_cls=linear_cls)
         load_quantized_model(model, model_path)
         return model
 
