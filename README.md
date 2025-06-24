@@ -191,6 +191,27 @@ python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
 Here `prompts.txt` contains one prompt per line (or a JSON list) used for the
 second pass.
 
+## MGRPO Benchmark Scripts
+
+The `scripts` directory contains helpers for running multi‑layer GRPO on the
+official reasoning benchmarks. Each wrapper downloads the dataset and launches
+`grpo_train.py` with the paper hyperparameters from `scripts/paper_config.json`.
+
+```bash
+# Train on the MATH benchmark
+scripts/mgrpo_math.sh
+
+# Train on GSM8K
+scripts/mgrpo_gsm8k.sh
+
+# Train on Minerva Math
+scripts/mgrpo_minerva.sh
+
+# Train on OlympiadBench
+scripts/mgrpo_olympiadbench.sh
+```
+Edit the reward model path inside each script to point at your checkpoint.
+
 ## Evaluation
 
 `evaluation.py` compares a CE fine‑tuned model to a GRPO model using the same QA
