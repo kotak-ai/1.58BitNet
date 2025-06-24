@@ -247,6 +247,20 @@ Helper loader functions such as `load_math_dataset` rely on the
 `datasets` library. They now accept an optional `path` argument for
 loading a local copy instead of downloading from the Hugging Face hub.
 If a dataset cannot be loaded a readable `RuntimeError` is raised.
+### Intrinsic Self-Correction Baseline
+
+Use `intrinsic_baseline.py` to measure a model's ability to correct its own answers without any RL updates. The script performs a second pass with a guiding prompt and reports the same metrics as `evaluation.py`.
+
+```bash
+python intrinsic_baseline.py --dataset qa.jsonl --model ce_model
+```
+
+For reasoning datasets pass `--task reasoning`:
+
+```bash
+python intrinsic_baseline.py --dataset math --model ce_model --task reasoning
+```
+
 
 ## Inference
 
