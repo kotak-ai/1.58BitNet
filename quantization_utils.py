@@ -61,16 +61,51 @@ class _LowBitMatMul(torch.autograd.Function):
         return grad_x, grad_w
 
 
-def gemm_lowbit(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+class _PackedLowBitMatMul(torch.autograd.Function):
+    """Matrix multiply with packed 1.58-bit weights."""
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, packed_w: torch.ByteTensor, shape: torch.Tensor) -> torch.Tensor:
+        w = unpack_ternary(packed_w.to(x.device), tuple(shape.tolist()))
+        ctx.save_for_backward(x, w)
+        out = (x.to(torch.int32) @ w.to(torch.int32).t()).to(torch.float32)
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, w = ctx.saved_tensors
+        grad_x = grad_w = grad_shape = None
+        if ctx.needs_input_grad[0]:
+            grad_x = grad_output @ w.to(torch.float32)
+        return grad_x, None, None
+
+
+def gemm_lowbit(x: torch.Tensor, w: torch.Tensor, weight_shape=None) -> torch.Tensor:
     """Matrix multiply for int8 tensors with float32 accumulation.
 
     This function works on CPU, CUDA and MPS by dispatching to a custom
-    :class:`torch.autograd.Function`.
+    :class:`torch.autograd.Function`. When ``w`` is a packed uint8 tensor the
+    original ``weight_shape`` must be provided and the multiplication is
+    performed without explicit unpacking on the host.
     """
 
-    if x.dtype != torch.int8 or w.dtype != torch.int8:
+    if x.dtype != torch.int8:
         raise TypeError("gemm_lowbit expects int8 inputs")
-    return _LowBitMatMul.apply(x, w)
+
+    if w.dtype == torch.int8:
+        if weight_shape is not None:
+            raise TypeError("weight_shape should be None for int8 weights")
+        return _LowBitMatMul.apply(x, w)
+    elif w.dtype == torch.uint8:
+        if weight_shape is None:
+            raise TypeError("weight_shape required for packed weights")
+        if not isinstance(weight_shape, torch.Tensor):
+            weight_shape = torch.tensor(weight_shape, dtype=torch.int32, device=x.device)
+        else:
+            weight_shape = weight_shape.to(torch.int32).to(x.device)
+        return _PackedLowBitMatMul.apply(x, w, weight_shape)
+    else:
+        raise TypeError("Unsupported weight dtype")
 
 def quantize_tensor(x: torch.Tensor, eps: float = 1e-5):
     gamma = x.abs().mean()

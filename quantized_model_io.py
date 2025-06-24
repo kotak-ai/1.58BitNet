@@ -31,6 +31,13 @@ def quantize_state_dict(state_dict: dict[str, torch.Tensor]):
             weight_map[name] = "model.safetensors"
             continue
 
+        if param.dtype in (torch.int32, torch.int64):
+            quantized[name] = param
+            size = param.numel() * param.element_size()
+            total_size += size
+            weight_map[name] = "model.safetensors"
+            continue
+
         if param.dtype == torch.int8:
             packed, shape = pack_quantized_tensor(param)
         else:
