@@ -137,6 +137,8 @@ class MultiLayerGRPOTrainer:
         self.verifier = verifier
         self.second_max_length = second_max_length
         self.augmentation_size = augmentation_size
+        # store successful corrections to reuse in future iterations
+        self.correction_buffer: list[tuple[torch.Tensor, torch.Tensor, int, float, float]] = []
 
     def train_batch(
         self,
@@ -165,6 +167,7 @@ class MultiLayerGRPOTrainer:
         corrected_rewards = []
         corrected_adv = []
         corrected_queries = []
+        new_buffer_entries: list[tuple[torch.Tensor, torch.Tensor, int, float, float]] = []
         log_text_list: list[str] = []
         success = 0
         total_attempts = 0
@@ -211,6 +214,15 @@ class MultiLayerGRPOTrainer:
                         success += 1
                         if len(log_text_list) < log_texts:
                             log_text_list.append(text)
+                        new_buffer_entries.append(
+                            (
+                                queries[b].clone(),
+                                new_resp.clone(),
+                                new_resp.numel(),
+                                reward_val,
+                                reward_val - base_reward,
+                            )
+                        )
                     corrected.append(new_resp)
                     corrected_len.append(new_resp.numel())
                     corrected_rewards.append(reward_val)
@@ -218,16 +230,27 @@ class MultiLayerGRPOTrainer:
                     corrected_queries.append(queries[b])
                     total_attempts += 1
                         
-        max_len = max(corrected_len)
-        corr_tensor = torch.full(
-            (len(corrected), 1, max_len), self.pad_id, dtype=torch.long
-        )
-        for i, seq in enumerate(corrected):
+        # combine stored corrections from previous iterations with the new ones
+        buf_q = [e[0] for e in self.correction_buffer]
+        buf_r = [e[1] for e in self.correction_buffer]
+        buf_l = [e[2] for e in self.correction_buffer]
+        buf_rewards = [e[3] for e in self.correction_buffer]
+        buf_adv = [e[4] for e in self.correction_buffer]
+
+        all_r = buf_r + corrected
+        all_len = buf_l + corrected_len
+        all_rewards = buf_rewards + corrected_rewards
+        all_adv = buf_adv + corrected_adv
+        all_queries = buf_q + corrected_queries
+
+        max_len = max(all_len)
+        corr_tensor = torch.full((len(all_r), 1, max_len), self.pad_id, dtype=torch.long)
+        for i, seq in enumerate(all_r):
             corr_tensor[i, 0, : seq.numel()] = seq
-        corr_len = torch.tensor(corrected_len, dtype=torch.long).unsqueeze(1)
-        corr_rewards = torch.tensor(corrected_rewards, dtype=torch.float).unsqueeze(1)
-        corr_adv = torch.tensor(corrected_adv, dtype=torch.float).unsqueeze(1)
-        corr_queries = torch.stack(corrected_queries)
+        corr_len = torch.tensor(all_len, dtype=torch.long).unsqueeze(1)
+        corr_rewards = torch.tensor(all_rewards, dtype=torch.float).unsqueeze(1)
+        corr_adv = torch.tensor(all_adv, dtype=torch.float).unsqueeze(1)
+        corr_queries = torch.stack(all_queries)
         loss2 = self.layer2.step(
             corr_queries,
             corr_tensor,
@@ -236,6 +259,9 @@ class MultiLayerGRPOTrainer:
             optimizer,
             advantages=corr_adv,
         )
+        # store successful corrections for the next iteration
+        self.correction_buffer.extend(new_buffer_entries)
+
         denom = B * G * self.augmentation_size
         if log_texts:
             return loss1 + loss2, float(success) / denom, log_text_list
