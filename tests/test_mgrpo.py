@@ -2,7 +2,7 @@ import torch
 import unittest
 import random
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
-from grpo_train import parse_guiding_prompts
+from grpo_train import parse_guiding_prompts, dynamic_verifier
 from grpo_data import construct_second_pass_input
 
 
@@ -241,6 +241,100 @@ class GRPOTest(unittest.TestCase):
         _, rate = trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
         self.assertEqual(rate, 1.0)
         self.assertTrue(torch.allclose(captured["rewards"], torch.tensor([[0.3]])))
+
+    def test_dynamic_verifier_rejects_incorrect(self):
+        class WrongModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 2, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = WrongModel()
+        ref = DummyModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+            verifier=dynamic_verifier,
+        )
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        called = {"ok": False}
+
+        def layer2_step(*args, **kwargs):
+            called["ok"] = True
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), 2, dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        _, rate = trainer.train_batch(
+            queries,
+            ql,
+            responses,
+            lengths,
+            rewards,
+            optim,
+            references=["3"],
+        )
+        self.assertEqual(rate, 0.0)
+        self.assertFalse(called["ok"])
+
+    def test_dynamic_verifier_accepts_correct(self):
+        class CorrectModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 3, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = CorrectModel()
+        ref = DummyModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+            verifier=dynamic_verifier,
+        )
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        called = {"ok": False}
+
+        def layer2_step(*args, **kwargs):
+            called["ok"] = True
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), 2, dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        _, rate = trainer.train_batch(
+            queries,
+            ql,
+            responses,
+            lengths,
+            rewards,
+            optim,
+            references=["3"],
+        )
+        self.assertEqual(rate, 1.0)
+        self.assertTrue(called["ok"])
 
     def test_deterministic_corrections(self):
         class RecordingModel(DummyModel):

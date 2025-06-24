@@ -130,6 +130,9 @@ parameters which mirror the publication are:
   correction is considered an improvement.
 - `improvement_threshold` – reward margin required for a correction to count as
   an improvement when the final answer is not exactly correct.
+- `verifier_mode` – choose between the default reward based verification or the
+  paper's dynamic verification which only accepts corrections with the correct
+  final answer.
 - The second GRPO layer trains on corrected answers whose reward improves over
   the first pass, using the reward difference as the advantage.
 
