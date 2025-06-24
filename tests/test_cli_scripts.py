@@ -8,6 +8,7 @@ if TRANS_AVAILABLE:
     import inference
     import data_loading_compatibility as dlc
     import evaluation
+    import intrinsic_baseline
 
 
 @unittest.skipUnless(TRANS_AVAILABLE, "transformers not available")
@@ -42,6 +43,24 @@ class EvaluationCLITest(unittest.TestCase):
                 max_length=20,
                 task='qa',
                 two_layer=False,
+                guiding_prompt='Review and correct the answer:',
+                second_max_length=20,
+            )
+
+
+@unittest.skipUnless(TRANS_AVAILABLE, "transformers not available")
+class IntrinsicBaselineCLITest(unittest.TestCase):
+    def test_main_calls_run(self):
+        with mock.patch('intrinsic_baseline.run') as run:
+            intrinsic_baseline.main([
+                '--dataset', 'd.json',
+                '--model', 'm',
+            ])
+            run.assert_called_with(
+                'd.json',
+                'm',
+                task='qa',
+                max_length=20,
                 guiding_prompt='Review and correct the answer:',
                 second_max_length=20,
             )
