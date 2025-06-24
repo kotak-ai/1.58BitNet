@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, LlamaConfig
 from safetensors.torch import load_file
 from llama_model import LlamaModel
 from training_utils import save_checkpoint, load_checkpoint, cosine_lr_wd
+from custom_gradient_checkpointing import custom_checkpoint
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import argparse
@@ -47,7 +48,7 @@ def preprocess_dataset(file_path, file_format):
                 data.append(json.loads(line)["text"])
     return data
 
-def loss(model, inputs, targets, lengths):
+def loss(model, inputs, targets, lengths, *, use_checkpoint: bool = False):
     # Move lengths to the same device as inputs
     inputs = inputs.to(device)
     lengths = lengths.to(device)
@@ -67,7 +68,13 @@ def loss(model, inputs, targets, lengths):
     cos[:, 0::2] = torch.cos(position_ids[:, None] * div_term)
     sin[:, 1::2] = torch.sin(position_ids[:, None] * div_term)
 
-    logits = model(inputs, attention_mask=attention_mask, cos=cos, sin=sin)
+    def fwd(x):
+        return model(x, attention_mask=attention_mask, cos=cos, sin=sin)
+
+    if use_checkpoint:
+        logits = custom_checkpoint(fwd, inputs)
+    else:
+        logits = fwd(inputs)
     logits = logits.view(-1, logits.size(-1))
 
     #print("Logits shape:", logits.shape)
@@ -140,7 +147,7 @@ def evaluate(model, dataset, loss_fn, tokenizer, batch_size, num_batches, max_le
 
     return np.sum(all_losses) / ntokens
 
-def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iters, val_batches, steps_per_report, steps_per_eval, max_length, grad_accum_steps, weight_decay=0.1, resume=None, save_interval=0):
+def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iters, val_batches, steps_per_report, steps_per_eval, max_length, grad_accum_steps, weight_decay=0.1, resume=None, save_interval=0, *, use_checkpoint: bool = False):
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     print("Learning rate:", optimizer.param_groups[0]['lr'])
     start_step = 0
@@ -161,7 +168,7 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
     while current_step < iters:
         for batch_idx, batch in enumerate(tqdm(iterate_batches(dataset, tokenizer, batch_size, train=True, max_length=max_length), desc=f"Iteration {current_step // steps_per_eval + 1}")):
             batch = tuple(t.to(device) for t in batch)
-            loss_value, ntoks = loss(model, *batch)
+            loss_value, ntoks = loss(model, *batch, use_checkpoint=use_checkpoint)
             loss_value = loss_value / grad_accum_steps
             loss_value.backward(retain_graph=True)
 
@@ -181,7 +188,16 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
             if current_step % steps_per_eval == 0:
                 cos = torch.zeros(max_length, model.config.hidden_size // model.config.num_attention_heads, device=device)
                 sin = torch.zeros(max_length, model.config.hidden_size // model.config.num_attention_heads, device=device)
-                val_loss = evaluate(model, dataset, loss, tokenizer, batch_size, val_batches, max_length, device)
+                val_loss = evaluate(
+                    model,
+                    dataset,
+                    lambda m, i, t, l: loss(m, i, t, l, use_checkpoint=use_checkpoint),
+                    tokenizer,
+                    batch_size,
+                    val_batches,
+                    max_length,
+                    device,
+                )
                 print(f"Validation Loss at Step {current_step}: {val_loss:.4f}")
                 model.train()
 
@@ -213,6 +229,11 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grad_accum_steps", type=int, default=1, help="Number of steps for gradient accumulation.")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint to resume from")
     parser.add_argument("--save_interval", type=int, default=0, help="Steps between checkpoint saves")
+    parser.add_argument(
+        "--grad_checkpoint",
+        action="store_true",
+        help="Wrap forward pass with custom_checkpoint to save memory",
+    )
     return parser
 
 
@@ -253,6 +274,7 @@ def run(args: argparse.Namespace):
         weight_decay=args.weight_decay,
         resume=args.resume,
         save_interval=args.save_interval,
+        use_checkpoint=args.grad_checkpoint,
     )
     model.save_pretrained(args.output_dir)
     return model

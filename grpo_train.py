@@ -189,6 +189,11 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", type=str, default=None, help="Resume training from checkpoint")
     parser.add_argument("--save_interval", type=int, default=0, help="Steps between checkpoint saves")
     parser.add_argument(
+        "--grad_checkpoint",
+        action="store_true",
+        help="Wrap policy forward passes with custom_checkpoint",
+    )
+    parser.add_argument(
         "--reward_model",
         type=str,
         nargs="+",
@@ -365,9 +370,16 @@ def main():
             ),
             second_max_length=args.second_max_length,
             augmentation_size=args.augmentation_size,
+            grad_checkpoint=args.grad_checkpoint,
         )
     else:
-        trainer = GRPOTrainer(model, ref_model, clip_eps=args.clip_eps, beta=args.beta)
+        trainer = GRPOTrainer(
+            model,
+            ref_model,
+            clip_eps=args.clip_eps,
+            beta=args.beta,
+            grad_checkpoint=args.grad_checkpoint,
+        )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     start_step = 0
     if args.resume:
