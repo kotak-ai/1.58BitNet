@@ -287,6 +287,8 @@ class GRPOTest(unittest.TestCase):
         trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
         first = captured["tokens"].clone()
 
+        trainer.correction_buffer.clear()
+
         torch.manual_seed(42)
         trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
         second = captured["tokens"].clone()
@@ -487,6 +489,48 @@ class GRPOTest(unittest.TestCase):
             not torch.allclose(p, q) for p, q in zip(model.parameters(), init_params)
         )
         self.assertTrue(overall_changed)
+
+    def test_correction_buffer_reused(self):
+        class RecordingModel(DummyModel):
+            def generate(self, inp, max_length, do_sample=True):
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+            second_max_length=2,
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        captured = {}
+
+        def layer2_step(q, r, l, rewards_, opt, advantages=None):
+            captured.setdefault("sizes", []).append(r.size(0))
+            return torch.tensor(0.0)
+
+        trainer.layer2.step = layer2_step
+
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
+        responses = torch.tensor([[[1, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+
+        self.assertEqual(captured["sizes"][0], 1)
+        self.assertEqual(captured["sizes"][1], 2)
 
 if __name__ == '__main__':
     unittest.main()
