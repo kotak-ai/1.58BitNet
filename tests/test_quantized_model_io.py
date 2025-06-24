@@ -27,8 +27,12 @@ class QuantizedIOTest(unittest.TestCase):
             qio.load_quantized_model(loaded, tmp)
 
             for name, param in model.state_dict().items():
-                q = quantize_tensor(param)
-                self.assertTrue(torch.equal(loaded.state_dict()[name], q.float()))
+                loaded_param = loaded.state_dict()[name]
+                if torch.is_floating_point(param) and param.numel() > 1:
+                    q = quantize_tensor(param)
+                    self.assertTrue(torch.equal(loaded_param, q.float()))
+                else:
+                    self.assertTrue(torch.equal(loaded_param, param))
         finally:
             shutil.rmtree(tmp)
             qio.save_file = orig_save

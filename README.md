@@ -2,6 +2,13 @@
 
 This repository provides an implementation of the 1.58 BitNet LLaMA model. The project aims to reduce memory usage through ternary quantisation while keeping the training workflow close to standard LLaMA models.
 
+### Packed Hadamard Linear Layers
+
+The code includes an `HBitLinear` module implementing a Hadamard transform with
+packed 1.58‑bit weights. `LlamaModel` uses this layer by default.  To fall back
+to the older quantised `BitLinear` simply pass `linear_cls=BitLinear` when
+instantiating or loading a model.
+
 ## Requirements and Setup
 
 The code depends on a handful of well‑known libraries.  A
