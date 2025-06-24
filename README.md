@@ -9,6 +9,10 @@ packed 1.58‑bit weights. `LlamaModel` uses this layer by default.  To fall bac
 to the older quantised `BitLinear` simply pass `linear_cls=BitLinear` when
 instantiating or loading a model.
 
+`gemm_lowbit` now supports multiplying int8 activations with these packed
+weights directly via CUDA and MPS kernels. Pass the packed tensor and its
+original shape to perform the multiplication without unpacking.
+
 ## Requirements and Setup
 
 The code depends on a handful of well‑known libraries.  A

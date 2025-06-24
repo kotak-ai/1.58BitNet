@@ -31,6 +31,10 @@ class HBitLinear(nn.Linear):
 
         self.register_buffer("packed_weight", torch.empty(0, dtype=torch.uint8))
         self.register_buffer("weight_scale", torch.tensor(1.0))
+        self.register_buffer(
+            "weight_shape",
+            torch.tensor([out_features, in_features], dtype=torch.int32),
+        )
 
         self.pack()
 
@@ -38,11 +42,14 @@ class HBitLinear(nn.Linear):
         q, scale = quantize_tensor_1_58bit(self.weight, self.eps)
         self.packed_weight = pack_ternary(q)
         self.weight_scale = scale
+        self.weight_shape = torch.tensor(
+            [self.out_features, self.in_features], dtype=torch.int32, device=self.packed_weight.device
+        )
         del self.weight
         self.register_parameter("weight", None)
 
     def unpack(self) -> torch.Tensor:
-        return unpack_ternary(self.packed_weight, (self.out_features, self.in_features))
+        return unpack_ternary(self.packed_weight, tuple(self.weight_shape.tolist()))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
         if self.hadamard is not None:
@@ -51,8 +58,7 @@ class HBitLinear(nn.Linear):
         a_scale = 7.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=self.eps)
         x_q = (x * a_scale).round().clamp_(-8, 7).to(torch.int8)
 
-        w_q = self.unpack()
-        out_int = gemm_lowbit(x_q, w_q)
+        out_int = gemm_lowbit(x_q, self.packed_weight, self.weight_shape)
         out = out_int.to(torch.float32) * self.weight_scale / a_scale
         if self.bias is not None:
             out += self.bias
