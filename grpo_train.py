@@ -79,6 +79,32 @@ def parse_guiding_prompts(value: str | list[str]) -> List[str]:
     return [str(value)]
 
 
+def _parse_number_list(value, conv):
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [conv(v) for v in value]
+    if isinstance(value, str) and os.path.isfile(value):
+        with open(value, "r", encoding="utf-8") as f:
+            text = f.read()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return [conv(v) for v in text.split() if v]
+        if isinstance(data, list):
+            return [conv(v) for v in data]
+        return [conv(data)]
+    return [conv(v) for v in str(value).split()]
+
+
+def parse_float_list(value):
+    return _parse_number_list(value, float)
+
+
+def parse_int_list(value):
+    return _parse_number_list(value, int)
+
+
 def prepare_batch(samples, tokenizer, model, group_size, max_length, reward_fn=f1_reward):
     q_tokens = [tokenizer.encode(s['query'], add_special_tokens=False) for s in samples]
     answers = [s['answer'] for s in samples]
@@ -189,6 +215,20 @@ def get_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Guiding prompt text or path to a file with one or more prompts (defaults to paper prompts)",
     )
+    parser.add_argument(
+        "--guiding_probabilities",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Optional probabilities matching --guiding_prompt when multiple prompts are provided",
+    )
+    parser.add_argument(
+        "--guiding_schedule",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Optional sequence of prompt indices selecting which guiding prompt to use at each step",
+    )
     parser.add_argument("--progress", action="store_true", help="Show progress bar if tqdm is available")
     return parser
 
@@ -200,6 +240,10 @@ def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentP
             cfg = json.load(f)
         if "guiding_prompt" in cfg:
             cfg["guiding_prompt"] = parse_guiding_prompts(cfg["guiding_prompt"])
+        if "guiding_schedule" in cfg:
+            cfg["guiding_schedule"] = parse_int_list(cfg["guiding_schedule"])
+        if "guiding_probabilities" in cfg:
+            cfg["guiding_probabilities"] = parse_float_list(cfg["guiding_probabilities"])
         for key, value in cfg.items():
             old_default = parser.get_default(key)
             parser.set_defaults(**{key: value})
@@ -243,6 +287,8 @@ def main():
         args.guiding_prompt = DEFAULT_GUIDING_PROMPTS
     else:
         args.guiding_prompt = parse_guiding_prompts(args.guiding_prompt)
+    args.guiding_schedule = parse_int_list(args.guiding_schedule)
+    args.guiding_probabilities = parse_float_list(args.guiding_probabilities)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -289,6 +335,8 @@ def main():
             second_layer_reward,
             tokenizer,
             guiding_prompt=args.guiding_prompt,
+            prompt_probs=args.guiding_probabilities,
+            prompt_schedule=args.guiding_schedule,
             clip_eps=args.clip_eps,
             beta=args.beta,
             verifier=lambda new, old, text=None, ref=None: simple_improvement_verifier(
