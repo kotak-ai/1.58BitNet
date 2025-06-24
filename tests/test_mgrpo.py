@@ -55,6 +55,18 @@ class GRPOTest(unittest.TestCase):
         loss = trainer.step(queries, responses, lengths, rewards, optim)
         self.assertIsInstance(loss.item(), float)
 
+    def test_dense_rewards(self):
+        model = DummyModel()
+        ref = DummyModel()
+        trainer = GRPOTrainer(model, ref)
+        optim = torch.optim.SGD(model.parameters(), lr=0.01)
+        queries = torch.randint(0, 10, (1, 3))
+        responses = torch.randint(0, 10, (1, 1, 4))
+        lengths = torch.tensor([[4]])
+        rewards = torch.rand(1, 1, 4)
+        loss = trainer.step(queries, responses, lengths, rewards, optim)
+        self.assertIsInstance(loss.item(), float)
+
     def test_multilayer(self):
         model = DummyModel()
         ref = DummyModel()

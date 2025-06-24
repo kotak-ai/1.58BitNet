@@ -155,11 +155,28 @@ class RewardModelScorer:
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         self.model.eval()
 
-    def score(self, query: str, response: str) -> float:
+    def score(self, query: str, response: str, *, dense: bool = False):
+        """Return a scalar reward or a sequence of token rewards."""
         inp = self.tokenizer(query, response, return_tensors="pt")
         with torch.no_grad():
-            logits = self.model(**inp).logits
+            outputs = self.model(**inp)
+        logits = outputs.logits
+        if logits.dim() == 3:  # token classification style
+            probs = torch.softmax(logits, dim=-1)
+            if probs.size(-1) == 1:
+                seq = torch.sigmoid(logits).squeeze(-1)
+            else:
+                seq = probs[..., -1]
+            if dense:
+                q_len = len(self.tokenizer.encode(query, add_special_tokens=False)) + 1
+                return seq[0, q_len:]
+            return float(seq.mean())
         probs = torch.softmax(logits, dim=-1)
         if probs.size(-1) == 1:
-            return float(torch.sigmoid(logits)[0, 0])
-        return float(probs[0, -1])
+            score = float(torch.sigmoid(logits)[0, 0])
+        else:
+            score = float(probs[0, -1])
+        if dense:
+            r_len = len(self.tokenizer.encode(response, add_special_tokens=False))
+            return torch.full((r_len,), score)
+        return score
