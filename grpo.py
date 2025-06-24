@@ -242,6 +242,7 @@ class MultiLayerGRPOTrainer:
                     except TypeError:
                         reward_val = float(self.reward_fn(text))
                     if self.verifier is None:
+                        store = True
                         improved = reward_val > base_reward
                     else:
                         ref = references[b] if references is not None else None
@@ -255,8 +256,8 @@ class MultiLayerGRPOTrainer:
                                 )
                             )
                         except TypeError:
-                            # Backwards compatibility with two-argument verifiers
                             improved = bool(self.verifier(reward_val, base_reward))
+                        store = improved
                     if improved:
                         success += 1
                         if len(log_text_list) < log_texts:
@@ -270,11 +271,12 @@ class MultiLayerGRPOTrainer:
                                 reward_val - base_reward,
                             )
                         )
-                    corrected.append(new_resp)
-                    corrected_len.append(new_resp.numel())
-                    corrected_rewards.append(reward_val)
-                    corrected_adv.append(reward_val - base_reward)
-                    corrected_queries.append(queries[b])
+                    if store:
+                        corrected.append(new_resp)
+                        corrected_len.append(new_resp.numel())
+                        corrected_rewards.append(reward_val)
+                        corrected_adv.append(reward_val - base_reward)
+                        corrected_queries.append(queries[b])
                     total_attempts += 1
                         
         # combine stored corrections from previous iterations with the new ones
@@ -290,22 +292,25 @@ class MultiLayerGRPOTrainer:
         all_adv = buf_adv + corrected_adv
         all_queries = buf_q + corrected_queries
 
-        max_len = max(all_len)
-        corr_tensor = torch.full((len(all_r), 1, max_len), self.pad_id, dtype=torch.long)
-        for i, seq in enumerate(all_r):
-            corr_tensor[i, 0, : seq.numel()] = seq
-        corr_len = torch.tensor(all_len, dtype=torch.long).unsqueeze(1)
-        corr_rewards = torch.tensor(all_rewards, dtype=torch.float).unsqueeze(1)
-        corr_adv = torch.tensor(all_adv, dtype=torch.float).unsqueeze(1)
-        corr_queries = torch.stack(all_queries)
-        loss2 = self.layer2.step(
-            corr_queries,
-            corr_tensor,
-            corr_len,
-            corr_rewards,
-            optimizer,
-            advantages=corr_adv,
-        )
+        if all_r:
+            max_len = max(all_len)
+            corr_tensor = torch.full((len(all_r), 1, max_len), self.pad_id, dtype=torch.long)
+            for i, seq in enumerate(all_r):
+                corr_tensor[i, 0, : seq.numel()] = seq
+            corr_len = torch.tensor(all_len, dtype=torch.long).unsqueeze(1)
+            corr_rewards = torch.tensor(all_rewards, dtype=torch.float).unsqueeze(1)
+            corr_adv = torch.tensor(all_adv, dtype=torch.float).unsqueeze(1)
+            corr_queries = torch.stack(all_queries)
+            loss2 = self.layer2.step(
+                corr_queries,
+                corr_tensor,
+                corr_len,
+                corr_rewards,
+                optimizer,
+                advantages=corr_adv,
+            )
+        else:
+            loss2 = torch.tensor(0.0)
         # store successful corrections for the next iteration
         self.correction_buffer.extend(new_buffer_entries)
 

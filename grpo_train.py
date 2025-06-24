@@ -184,6 +184,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
             " improvement when the final answer is not exactly correct"
         ),
     )
+    parser.add_argument(
+        "--verifier_mode",
+        choices=["simple", "dynamic"],
+        default="simple",
+        help="Choose how corrections are verified before training",
+    )
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
     parser.add_argument("--two_layer", action="store_true", help="Use MultiLayer GRPO")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from checkpoint")
@@ -291,6 +297,22 @@ def simple_improvement_verifier(
         )
     return accurate or (new_reward - old_reward) > threshold
 
+
+def dynamic_verifier(
+    new_reward: float,
+    old_reward: float,
+    new_text: str | None = None,
+    reference: str | list[str] | None = None,
+    *,
+    threshold: float = 0.05,
+) -> bool:
+    """Return ``True`` when the new answer is exactly correct."""
+
+    if new_text is not None and reference is not None:
+        refs = reference if isinstance(reference, (list, tuple)) else [reference]
+        return any(accuracy_reward(new_text, ref) == 1.0 for ref in refs)
+    return (new_reward - old_reward) > threshold
+
 def main():
     parser = get_arg_parser()
     args = parser.parse_args()
@@ -351,6 +373,23 @@ def main():
                 return args.rule_weight * rule + (1.0 - args.rule_weight) * model_val
             return rule
 
+        if args.verifier_mode == "dynamic":
+            verify_fn = lambda new, old, text=None, ref=None: dynamic_verifier(
+                new,
+                old,
+                text,
+                ref,
+                threshold=args.improvement_threshold,
+            )
+        else:
+            verify_fn = lambda new, old, text=None, ref=None: simple_improvement_verifier(
+                new,
+                old,
+                text,
+                ref,
+                threshold=args.improvement_threshold,
+            )
+
         trainer = MultiLayerGRPOTrainer(
             model,
             ref_model,
@@ -361,13 +400,7 @@ def main():
             prompt_schedule=args.guiding_schedule,
             clip_eps=args.clip_eps,
             beta=args.beta,
-            verifier=lambda new, old, text=None, ref=None: simple_improvement_verifier(
-                new,
-                old,
-                text,
-                ref,
-                threshold=args.improvement_threshold,
-            ),
+            verifier=verify_fn,
             second_max_length=args.second_max_length,
             augmentation_size=args.augmentation_size,
             grad_checkpoint=args.grad_checkpoint,
