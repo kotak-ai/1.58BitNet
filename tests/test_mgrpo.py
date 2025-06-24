@@ -438,5 +438,55 @@ class GRPOTest(unittest.TestCase):
         self.assertEqual(rate, 1.0)
         self.assertEqual(captured["shapes"], ((2, 1, trainer.second_max_length), (2, 1), (2, 1), (2, 1)))
 
+    def test_augmentation_size_updates_model(self):
+        tok = DummyTokenizer()
+        model = DummyModel()
+        ref = DummyModel()
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt="fix",
+            augmentation_size=2,
+            second_max_length=2,
+        )
+
+        # disable the first layer for speed
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        optim = torch.optim.SGD(model.parameters(), lr=0.01)
+
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), queries.size(1), dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+
+        captured = {}
+        orig_step = trainer.layer2.step
+
+        def wrapped_step(q, r, l, rewards_, opt, advantages=None):
+            captured["shape"] = r.shape
+            before = [p.clone() for p in trainer.layer2.model.parameters()]
+            loss = orig_step(q, r, l, rewards_, opt, advantages)
+            for p1, p2 in zip(trainer.layer2.model.parameters(), trainer.layer2.old_model.parameters()):
+                self.assertTrue(torch.allclose(p1, p2))
+            changed = any(not torch.allclose(b, a) for b, a in zip(before, trainer.layer2.model.parameters()))
+            captured["changed"] = changed
+            return loss
+
+        trainer.layer2.step = wrapped_step
+
+        init_params = [p.clone() for p in model.parameters()]
+
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+
+        self.assertEqual(captured["shape"], (2, 1, trainer.second_max_length))
+        self.assertTrue(captured["changed"])
+        overall_changed = any(
+            not torch.allclose(p, q) for p, q in zip(model.parameters(), init_params)
+        )
+        self.assertTrue(overall_changed)
+
 if __name__ == '__main__':
     unittest.main()
