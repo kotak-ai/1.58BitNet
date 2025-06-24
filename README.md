@@ -87,6 +87,11 @@ Optional features:
   answers for inspection.
 - `--resume CKPT` &ndash; resume training from a checkpoint created with
   `save_checkpoint`.
+- `--guiding_probabilities` &ndash; probabilities corresponding to each entry in
+  `--guiding_prompt` for weighted random selection.
+- `--guiding_schedule` &ndash; sequence of prompt indices determining which
+  guiding prompt to use for successive batches. Overrides
+  `--guiding_probabilities` when provided.
 
 Example `config.json` providing defaults:
 
@@ -154,7 +159,9 @@ The correction prompt follows the template:
 ```
 
 `--guiding_prompt` may be a path to a text or JSON file containing multiple
-prompts. One of these prompts is randomly selected for each correction.
+prompts. By default a prompt is chosen at random for each correction. Pass
+`--guiding_probabilities` to weight this random selection or provide
+`--guiding_schedule` with a list of indices to follow a fixed order.
 
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m \

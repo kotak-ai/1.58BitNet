@@ -399,6 +399,102 @@ class GRPOTest(unittest.TestCase):
 
         self.assertNotEqual(call1.tolist(), call2.tolist())
 
+    def test_guiding_prompt_probabilities(self):
+        class RecordingModel(DummyModel):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+
+            def generate(self, inp, max_length, do_sample=True):
+                self.calls.append(inp.clone())
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        prompts = ["fix", "check"]
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt=prompts,
+            prompt_probs=[1.0, 0.0],
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        trainer.layer2.step = lambda *args, **kwargs: torch.tensor(0.0)
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), 2, dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        call = model.calls[-1][0]
+        enc = torch.tensor(tok.encode("fix", add_special_tokens=False), dtype=torch.long)
+        self.assertTrue(any(torch.equal(call[i : i + enc.numel()], enc) for i in range(call.size(0) - enc.numel() + 1)))
+
+    def test_guiding_prompt_schedule(self):
+        class RecordingModel(DummyModel):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+
+            def generate(self, inp, max_length, do_sample=True):
+                self.calls.append(inp.clone())
+                B = inp.size(0)
+                L = max_length - inp.size(1)
+                gen = torch.full((B, L), 4, dtype=torch.long)
+                return torch.cat([inp, gen], dim=1)
+
+        tok = DummyTokenizer()
+        model = RecordingModel()
+        ref = DummyModel()
+        prompts = ["fix", "check"]
+        trainer = MultiLayerGRPOTrainer(
+            model,
+            ref,
+            simple_reward,
+            tok,
+            guiding_prompt=prompts,
+            prompt_schedule=[1, 0],
+        )
+
+        trainer.layer1.step = lambda *args, **kwargs: torch.tensor(0.0)
+        trainer.layer2.step = lambda *args, **kwargs: torch.tensor(0.0)
+        queries = torch.tensor([[2, 3]], dtype=torch.long)
+        ql = torch.full((1,), 2, dtype=torch.long)
+        responses = torch.tensor([[[4, 5]]], dtype=torch.long)
+        lengths = torch.tensor([[2]], dtype=torch.long)
+        rewards = torch.tensor([[0.0]], dtype=torch.float)
+        optim = torch.optim.SGD(model.parameters(), lr=0.0)
+
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        first_call = model.calls[-1][0]
+        trainer.train_batch(queries, ql, responses, lengths, rewards, optim)
+        second_call = model.calls[-1][0]
+
+        expected_first, _ = construct_second_pass_input(
+            tok,
+            queries[0, : ql[0]],
+            responses[0, 0, : lengths[0, 0]],
+            torch.tensor(tok.encode(prompts[1], add_special_tokens=False), dtype=torch.long),
+        )
+        expected_second, _ = construct_second_pass_input(
+            tok,
+            queries[0, : ql[0]],
+            responses[0, 0, : lengths[0, 0]],
+            torch.tensor(tok.encode(prompts[0], add_special_tokens=False), dtype=torch.long),
+        )
+
+        self.assertTrue(torch.equal(first_call[: expected_first.numel()], expected_first))
+        self.assertTrue(torch.equal(second_call[: expected_second.numel()], expected_second))
+
     def test_augmentation_size_multiple_corrections(self):
         class RecordingModel(DummyModel):
             def generate(self, inp, max_length, do_sample=True):

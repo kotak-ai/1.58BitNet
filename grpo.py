@@ -96,8 +96,15 @@ class MultiLayerGRPOTrainer:
         layer.  It receives the decoded response text and returns a scalar
         reward value.
     guiding_prompt : str or list[str]
-        One or more prompts appended during the second pass.  If multiple
-        prompts are provided a random one is chosen for each correction.
+        One or more prompts appended during the second pass. If multiple
+        prompts are provided a random one is chosen for each correction
+        unless ``prompt_probs`` or ``prompt_schedule`` is specified.
+    prompt_probs : list[float], optional
+        Probabilities used to randomly select one of ``guiding_prompt`` when
+        generating a correction. Length must match the number of prompts.
+    prompt_schedule : list[int], optional
+        Sequence of prompt indices used in order for successive calls to
+        :meth:`train_batch`. Overrides ``prompt_probs`` when provided.
     """
 
     def __init__(
@@ -107,6 +114,9 @@ class MultiLayerGRPOTrainer:
         reward_fn: Callable[[str], float],
         tokenizer,
         guiding_prompt: str | list[str],
+        *,
+        prompt_probs: Sequence[float] | None = None,
+        prompt_schedule: Sequence[int] | None = None,
         clip_eps: float = 0.2,
         beta: float = 0.01,
         verifier: Callable[[float, float], bool] | None = None,
@@ -126,6 +136,22 @@ class MultiLayerGRPOTrainer:
             )
             for p in guiding_prompt
         ]
+        if prompt_probs is not None:
+            if len(prompt_probs) != len(self.guidance_tokens):
+                raise ValueError("prompt_probs must match number of guiding prompts")
+            total = float(sum(prompt_probs))
+            if total <= 0:
+                raise ValueError("prompt_probs sum must be positive")
+            self.prompt_probs = [float(p) / total for p in prompt_probs]
+        else:
+            self.prompt_probs = None
+        if prompt_schedule is not None:
+            if not all(0 <= i < len(self.guidance_tokens) for i in prompt_schedule):
+                raise ValueError("prompt_schedule indices out of range")
+            self.prompt_schedule = list(prompt_schedule)
+        else:
+            self.prompt_schedule = None
+        self._schedule_idx = 0
         sep = getattr(tokenizer, "sep_token_id", None)
         if sep is None:
             sep = getattr(tokenizer, "eos_token_id", 0)
@@ -178,7 +204,14 @@ class MultiLayerGRPOTrainer:
                 resp = responses[b, g, : lengths[b, g]]
                 base_reward = float(rewards[b, g])
                 for _ in range(self.augmentation_size):
-                    guidance = random.choice(self.guidance_tokens)
+                    if self.prompt_schedule is not None:
+                        idx = self.prompt_schedule[self._schedule_idx % len(self.prompt_schedule)]
+                        self._schedule_idx += 1
+                    elif self.prompt_probs is not None:
+                        idx = random.choices(range(len(self.guidance_tokens)), weights=self.prompt_probs)[0]
+                    else:
+                        idx = random.randrange(len(self.guidance_tokens))
+                    guidance = self.guidance_tokens[idx]
                     inp, inp_len = construct_second_pass_input(
                         self.tokenizer,
                         q_tokens,
