@@ -52,7 +52,16 @@ class RewardModel(nn.Module):
         input_ids: torch.Tensor,
         pos_ids: Optional[torch.Tensor] = None,
         seg_ids: Optional[torch.Tensor] = None,
+        *,
+        reduce: bool = True,
     ) -> torch.Tensor:
+        """Return sequence or pooled reward logits.
+
+        When ``reduce`` is ``True`` (default) the transformer outputs are
+        averaged across the sequence before passing through the reward head.
+        Setting ``reduce=False`` skips this pooling step so the returned tensor
+        has shape ``[B, L]`` with one reward value per input token.
+        """
         x = self.embed(input_ids)
         if pos_ids is not None:
             x = x + self.pos_embed(pos_ids)
@@ -60,11 +69,20 @@ class RewardModel(nn.Module):
             x = x + self.seg_embed(seg_ids)
         x = self.dropout(x)
         x = self.encoder(x)
-        pooled = x.mean(dim=1)
-        pooled = self.dropout(pooled)
-        return self.head(pooled).squeeze(-1)
+        if reduce:
+            pooled = x.mean(dim=1)
+            pooled = self.dropout(pooled)
+            return self.head(pooled).squeeze(-1)
+        x = self.dropout(x)
+        return self.head(x).squeeze(-1)
 
-    def _score_ids(self, query_ids: torch.Tensor, resp_ids: torch.Tensor) -> torch.Tensor:
+    def _score_ids(
+        self,
+        query_ids: torch.Tensor,
+        resp_ids: torch.Tensor,
+        *,
+        dense: bool = False,
+    ) -> torch.Tensor:
         ids = torch.cat([
             query_ids,
             torch.tensor([self.sep_id], dtype=torch.long),
@@ -78,9 +96,18 @@ class RewardModel(nn.Module):
             torch.tensor([0], dtype=torch.long),
             torch.ones(len(resp_ids), dtype=torch.long),
         ])[: len(ids)]
-        return self.forward(ids.unsqueeze(0), pos.unsqueeze(0), seg.unsqueeze(0))[0]
+        out = self.forward(
+            ids.unsqueeze(0),
+            pos.unsqueeze(0),
+            seg.unsqueeze(0),
+            reduce=not dense,
+        )[0]
+        if dense:
+            start = min(len(query_ids) + 1, out.size(0))
+            return out[start:]
+        return out
 
-    def score(self, query: str, response: str) -> float:
+    def score(self, query: str, response: str, *, dense: bool = False):
         if self.tokenizer is None:
             raise ValueError("RewardModel requires a tokenizer")
         q_ids = torch.tensor(
@@ -91,7 +118,9 @@ class RewardModel(nn.Module):
             dtype=torch.long,
         )
         with torch.no_grad():
-            val = self._score_ids(q_ids, r_ids)
+            val = self._score_ids(q_ids, r_ids, dense=dense)
+        if dense:
+            return val
         return float(val)
 
     def contrastive_loss(
@@ -129,7 +158,7 @@ def load_reward_models(
     paths: Sequence[str],
     tokenizer,
     weights: Sequence[float] | None = None,
-) -> Callable[[str, str, str], float]:
+) -> Callable[[str, str, str, bool], torch.Tensor | float]:
     """Return a scoring function combining multiple reward models.
 
     Parameters
@@ -150,7 +179,13 @@ def load_reward_models(
     total = float(sum(weights))
     norm = [float(w) / total for w in weights]
 
-    def score_fn(generated: str, reference: str, query: str) -> float:
+    def score_fn(generated: str, reference: str, query: str, dense: bool = False):
+        if dense:
+            seq = None
+            for m, w in zip(models, norm):
+                val = m.score(query, generated, dense=True) * w
+                seq = val if seq is None else seq + val
+            return seq
         score = 0.0
         for m, w in zip(models, norm):
             score += w * m.score(query, generated)

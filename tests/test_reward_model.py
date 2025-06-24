@@ -16,6 +16,13 @@ class RewardModelTest(unittest.TestCase):
         val = model.score("hi", "there")
         self.assertIsInstance(val, float)
 
+    def test_dense_score(self):
+        tok = DummyTokenizer()
+        model = RewardModel(vocab_size=tok.vocab_size, tokenizer=tok)
+        seq = model.score("hi", "abc", dense=True)
+        self.assertEqual(seq.numel(), 3)
+        self.assertIsInstance(seq, torch.Tensor)
+
     def test_load_reward_models_weighted_sum(self):
         tok = DummyTokenizer()
 

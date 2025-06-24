@@ -57,11 +57,13 @@ class GRPOTrainer:
             queries: [B, Lq] tokens for queries.
             responses: [B, G, L] response tokens.
             lengths: [B, G] lengths for responses.
-            rewards: [B, G] scalar rewards for each response.
+            rewards: [B, G] scalar rewards for each response or
+                [B, G, L] dense per-token rewards.
         Returns:
             Loss tensor.
         """
         B, G, L = responses.shape
+        dense = rewards.dim() == 3
         with torch.no_grad():
             if advantages is None:
                 baseline = rewards.mean(dim=1, keepdim=True)
@@ -83,7 +85,7 @@ class GRPOTrainer:
         logp = self._log_probs(logits, responses_flat)
         old_logp = self._log_probs(old_logits, responses_flat)
         ref_logp = self._log_probs(ref_logits, responses_flat)
-        adv_flat = adv.view(B * G)
+        adv_flat = adv.view(B * G, L) if dense else adv.view(B * G)
         mask = (torch.arange(L, device=responses.device).unsqueeze(0) < lengths_flat.unsqueeze(1)).float()
         obj = self.grpo_objective(logp, old_logp, adv_flat, ref_logp, mask)
         loss = -torch.mean(obj)
@@ -211,7 +213,10 @@ class MultiLayerGRPOTrainer:
             q_tokens = queries[b, : query_lengths[b]]
             for g in range(G):
                 resp = responses[b, g, : lengths[b, g]]
-                base_reward = float(rewards[b, g])
+                if rewards.dim() == 3:
+                    base_reward = float(rewards[b, g, : lengths[b, g]].mean())
+                else:
+                    base_reward = float(rewards[b, g])
                 for _ in range(self.augmentation_size):
                     if self.prompt_schedule is not None:
                         idx = self.prompt_schedule[self._schedule_idx % len(self.prompt_schedule)]

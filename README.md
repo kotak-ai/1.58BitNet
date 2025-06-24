@@ -100,6 +100,8 @@ Optional features:
   to save memory.
 - `--rule_weight` &ndash; weight assigned to the rule-based F1 reward when
   combining with external reward models.
+- Reward models now support **dense** scoring. When available the training
+  loop consumes a sequence of per-token rewards instead of a single scalar.
 - `--guiding_probabilities` &ndash; probabilities corresponding to each entry in
   `--guiding_prompt` for weighted random selection.
 - `--guiding_schedule` &ndash; sequence of prompt indices determining which
