@@ -90,6 +90,7 @@ class ReasoningEvalTest(unittest.TestCase):
         metrics = evaluate_reasoning_model(Model(), tok, data, 2)
         self.assertAlmostEqual(metrics["accuracy_t1"], 1.0)
         self.assertAlmostEqual(metrics["accuracy_t1_prime"], 1.0)
+        self.assertAlmostEqual(metrics["delta_t1_t2"], 0.0)
         self.assertAlmostEqual(metrics["delta_t1p_t2"], 0.0)
         self.assertAlmostEqual(metrics["delta_i2c"], 0.0)
 
@@ -115,6 +116,7 @@ class ReasoningEvalTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["accuracy_t1"], 0.0)
         self.assertAlmostEqual(metrics["accuracy_t1_prime"], 1.0)
         self.assertAlmostEqual(metrics["accuracy_t2"], 1.0)
+        self.assertAlmostEqual(metrics["delta_t1_t2"], 1.0)
         self.assertAlmostEqual(metrics["delta_t1p_t2"], 0.0)
         self.assertAlmostEqual(metrics["delta_i2c"], 1.0)
 
