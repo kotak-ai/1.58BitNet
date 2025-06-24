@@ -212,6 +212,61 @@ scripts/mgrpo_olympiadbench.sh
 ```
 Edit the reward model path inside each script to point at your checkpoint.
 
+## Reproducing the Paper Experiments
+
+The full pipeline used in the paper starts from an empty quantised model and
+applies CE training followed by GRPO or MGRPO.  The steps below mirror this
+process.
+
+1. **Create a blank model**
+
+   ```bash
+   python new-model-architecture-creation.py --params 750M --output_dir llama_750m
+   ```
+
+2. **Cross‑entropy fine tuning**
+
+   Train the baseline model on your text corpus.  The `scripts/ce_training.sh`
+   helper contains the command used in the paper.  Edit `DATA_PATH` and
+   `MODEL_PATH` inside the script then run:
+
+   ```bash
+   scripts/ce_training.sh
+   ```
+
+3. **Single‑layer GRPO**
+
+   Use `scripts/grpo_training.sh` to reproduce the GRPO baseline.  This invokes
+   `grpo_train.py` with the hyperparameters from
+   `scripts/paper_config.json`.
+
+4. **Multi‑Layer GRPO**
+
+   Launch one of the benchmark wrappers, for example:
+
+   ```bash
+   scripts/mgrpo_math.sh
+   ```
+
+   These wrappers download the dataset, pass `--two_layer` to `grpo_train.py`
+   and write the final model to the output directory specified in the script.
+
+5. **Evaluation**
+
+   After training both CE and GRPO models run:
+
+   ```bash
+   python evaluation.py --dataset math --ce_model ce_model --grpo_model mgrpo_math --two_layer
+   ```
+
+   The script prints `accuracy_t1`, `accuracy_t1_prime`, `accuracy_t2`,
+   `delta_t1_t2`, `delta_t1p_t2`, `delta_i2c` and `delta_c2i`.  On QA datasets it
+   instead reports F1 scores.
+
+Expected results should match Table 2 from the paper with final accuracies of
+approximately **90.4%** on MATH, **95.6%** on GSM8K, **39.3%** on Minerva Math
+and **50.4%** on OlympiadBench.
+
 ## Evaluation
 
 `evaluation.py` compares a CE fine‑tuned model to a GRPO model using the same QA
