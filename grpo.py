@@ -226,7 +226,12 @@ class MultiLayerGRPOTrainer:
                         )
                     new_resp = gen[0, inp_len:]
                     text = self.tokenizer.decode(new_resp.tolist())
-                    reward_val = float(self.reward_fn(text))
+                    query_text = self.tokenizer.decode(q_tokens.tolist())
+                    ref_text = references[b] if references is not None else None
+                    try:
+                        reward_val = float(self.reward_fn(text, ref_text, query_text))
+                    except TypeError:
+                        reward_val = float(self.reward_fn(text))
                     if self.verifier is None:
                         improved = reward_val > base_reward
                     else:
