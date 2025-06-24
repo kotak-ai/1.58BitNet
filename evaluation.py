@@ -137,6 +137,7 @@ def evaluate_reasoning_model(
         "accuracy_t1": correct_first / N,
         "accuracy_t1_prime": correct_second_prime / N,
         "accuracy_t2": correct_second / N,
+        "delta_t1_t2": (correct_second / N) - (correct_first / N),
         "delta_t1p_t2": (correct_second / N) - (correct_second_prime / N),
         "delta_i2c": changed_ic / N,
         "delta_c2i": changed_ci / N,
@@ -252,12 +253,24 @@ def run(
         guiding_prompt=guiding_prompt,
         second_max_length=second_max_length,
     )
-    print("CE model metrics:")
-    for k, v in ce_metrics.items():
-        print(f"  {k}: {v:.4f}")
-    print("GRPO model metrics:")
-    for k, v in grpo_metrics.items():
-        print(f"  {k}: {v:.4f}")
+    metrics_to_show = [
+        "accuracy_t1",
+        "accuracy_t1_prime",
+        "accuracy_t2",
+        "delta_t1_t2",
+        "delta_t1p_t2",
+        "delta_i2c",
+        "delta_c2i",
+    ]
+    header = f"{'Metric':<18}{'CE model':>12}{'GRPO model':>12}"
+    print(header)
+    print("-" * len(header))
+    for key in metrics_to_show:
+        ce_val = ce_metrics.get(key)
+        grpo_val = grpo_metrics.get(key)
+        ce_str = f"{ce_val:.4f}" if ce_val is not None else "-"
+        grpo_str = f"{grpo_val:.4f}" if grpo_val is not None else "-"
+        print(f"{key:<18}{ce_str:>12}{grpo_str:>12}")
     return {"ce": ce_metrics, "grpo": grpo_metrics}
 
 

@@ -195,11 +195,18 @@ script also reports token level F1 for the text inside `<think>` tags and a
 `step_correctness` metric measuring how many reasoning steps match the reference.
 When using the two layer mode additional statistics are printed, including
 `accuracy_t1_prime` (accuracy after the second pass prior to RL updates) and
-`delta_t1p_t2` showing the change from this baseline to the final accuracy.
+`delta_t1p_t2` showing the change from this baseline to the final accuracy. A
+`delta_t1_t2` metric is also reported measuring the accuracy improvement from
+the first to second pass.
 
 ```bash
 python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_model
 ```
+
+When both models are evaluated on a reasoning dataset the script prints a table
+mirroring Table 2 in the paper summarising `accuracy_t1`, `accuracy_t1_prime`,
+`accuracy_t2`, `delta_t1_t2`, `delta_t1p_t2`, `delta_i2c` and `delta_c2i` for
+each model.
 
 Passing `--two_layer` runs a second correction pass before scoring each answer.
 The second pass uses the same template as training with `<think>` tags.  The
