@@ -62,7 +62,8 @@ the stored shape. Config and tokenizer files are stored alongside these.
 file may be plain text or a JSON/JSONL file containing a `text` field.  Each
 line or record is treated as one training example. Pass `--save_interval` to
 periodically checkpoint training and `--resume` to continue from a saved
-checkpoint.
+checkpoint. Use `--grad_checkpoint` to reduce memory usage at the cost of extra
+compute.
 
 ```bash
 python trainingv2.py --dataset path/to/data.jsonl --model_path path/to/model --output_dir ce_out --iters 1000
@@ -95,6 +96,8 @@ Optional features:
   answers for inspection.
 - `--resume CKPT` &ndash; resume training from a checkpoint created with
   `save_checkpoint`.
+- `--grad_checkpoint` &ndash; wrap policy forward passes with `custom_checkpoint`
+  to save memory.
 - `--rule_weight` &ndash; weight assigned to the rule-based F1 reward when
   combining with external reward models.
 - `--guiding_probabilities` &ndash; probabilities corresponding to each entry in
@@ -147,12 +150,14 @@ The decoder layers use a small `custom_checkpoint` wrapper to recompute the
 attention and MLP blocks during backpropagation. This reduces peak memory usage
 so the code can train larger models on commodity GPUs at the cost of some extra
 compute.
+Passing `--grad_checkpoint` to the training scripts additionally wraps the full
+forward pass with this checkpointing mechanism for further memory savings.
 
 Example command for a small CE run:
 
 ```bash
 python trainingv2.py --dataset data/train.jsonl --model_path llama_750m \
-    --output_dir ce_model --iters 10000 --batch_size 8 \
+    --output_dir ce_model --iters 10000 --batch_size 8 --grad_checkpoint \
     --resume ce_model/ce.ckpt --save_interval 1000
 ```
 
@@ -161,7 +166,7 @@ Example command for GRPO with two reward models:
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
     --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 --rule_weight 0.5 \
-    --output_dir grpo_model
+    --output_dir grpo_model --grad_checkpoint
 ```
 
 ## Two-Layer Self-Correction

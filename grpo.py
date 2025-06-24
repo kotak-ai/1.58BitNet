@@ -6,14 +6,16 @@ from typing import List, Tuple, Callable, Sequence
 import copy
 import random
 from grpo_data import construct_second_pass_input
+from custom_gradient_checkpointing import custom_checkpoint
 
 class GRPOTrainer:
     """Implements the single-layer Group Relative Policy Optimization algorithm."""
-    def __init__(self, model: nn.Module, ref_model: nn.Module, clip_eps: float = 0.2, beta: float = 0.01):
+    def __init__(self, model: nn.Module, ref_model: nn.Module, clip_eps: float = 0.2, beta: float = 0.01, *, grad_checkpoint: bool = False):
         self.model = model
         self.ref_model = ref_model
         self.clip_eps = clip_eps
         self.beta = beta
+        self.grad_checkpoint = grad_checkpoint
         self.old_model = copy.deepcopy(model)
         self.old_model.load_state_dict(model.state_dict())
 
@@ -69,9 +71,15 @@ class GRPOTrainer:
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         responses_flat = responses.view(B * G, L)
         lengths_flat = lengths.view(B * G)
-        logits = self.model(responses_flat)
-        old_logits = self.old_model(responses_flat)
-        ref_logits = self.ref_model(responses_flat)
+
+        if self.grad_checkpoint:
+            logits = custom_checkpoint(self.model, responses_flat)
+            old_logits = custom_checkpoint(self.old_model, responses_flat)
+            ref_logits = custom_checkpoint(self.ref_model, responses_flat)
+        else:
+            logits = self.model(responses_flat)
+            old_logits = self.old_model(responses_flat)
+            ref_logits = self.ref_model(responses_flat)
         logp = self._log_probs(logits, responses_flat)
         old_logp = self._log_probs(old_logits, responses_flat)
         ref_logp = self._log_probs(ref_logits, responses_flat)
@@ -122,9 +130,10 @@ class MultiLayerGRPOTrainer:
         verifier: Callable[[float, float], bool] | None = None,
         second_max_length: int = 20,
          augmentation_size: int = 1,
+        grad_checkpoint: bool = False,
     ):
-        self.layer1 = GRPOTrainer(model, ref_model, clip_eps, beta)
-        self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta)
+        self.layer1 = GRPOTrainer(model, ref_model, clip_eps, beta, grad_checkpoint=grad_checkpoint)
+        self.layer2 = GRPOTrainer(model, ref_model, clip_eps, beta, grad_checkpoint=grad_checkpoint)
         self.reward_fn = reward_fn
         self.tokenizer = tokenizer
         if isinstance(guiding_prompt, str):
