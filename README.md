@@ -138,8 +138,8 @@ forward KL estimator $\sum_t p_\theta(t) (\log p_\theta(t) - \log p_{\text{ref}}
 averaged over tokens.
 
 ```bash
-python grpo_train.py --dataset qa.jsonl --model_path path/to/model \
-    --output_dir grpo_out --steps 1000 --csv_log metrics.csv
+python grpo_train.py --config scripts/paper_config.json --dataset qa.jsonl \
+    --model_path path/to/model --output_dir grpo_out --csv_log metrics.csv
 ```
 
 ## Hardware and Example Commands
