@@ -263,3 +263,5 @@ pytest
 ```
 
 All tests should pass; one test is skipped when WordNet data is unavailable.
+Recent tests also verify that `MultiLayerGRPOTrainer` handles `--augmentation_size`
+values greater than one by generating multiple corrections and updating the model.
