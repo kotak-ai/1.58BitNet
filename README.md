@@ -181,6 +181,9 @@ F1 reward as training.  The dataset format matches the GRPO training set
 (`{ "query": ..., "answer": ... }`). When a record includes a `reasoning` field the
 script also reports token level F1 for the text inside `<think>` tags and a
 `step_correctness` metric measuring how many reasoning steps match the reference.
+When using the two layer mode additional statistics are printed, including
+`accuracy_t1_prime` (accuracy after the second pass prior to RL updates) and
+`delta_t1p_t2` showing the change from this baseline to the final accuracy.
 
 ```bash
 python evaluation.py --dataset qa.jsonl --ce_model ce_model --grpo_model grpo_model
