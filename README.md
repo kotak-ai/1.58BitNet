@@ -136,6 +136,11 @@ python grpo_train.py --dataset qa.jsonl --model_path path/to/model \
 
 Training large models is memory intensive. The scripts are tested on Apple MPS with CPU fallbacks but work on any hardware that PyTorch supports. Expect to require tens of gigabytes of RAM for multi‑billion parameter models.
 
+The decoder layers use a small `custom_checkpoint` wrapper to recompute the
+attention and MLP blocks during backpropagation. This reduces peak memory usage
+so the code can train larger models on commodity GPUs at the cost of some extra
+compute.
+
 Example command for a small CE run:
 
 ```bash

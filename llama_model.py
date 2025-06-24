@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn as nn
+
 try:
     from transformers import LlamaConfig, AutoTokenizer
 except Exception:  # pragma: no cover - transformers may be missing
@@ -18,6 +19,7 @@ from quantization_utils import (
     pack_quantized_tensor,
     unpack_quantized_tensor,
 )
+
 try:
     from safetensors.torch import save_file, load_file
 except Exception:  # pragma: no cover - safetensors may be missing
@@ -30,8 +32,10 @@ import numpy as np
 import time
 from custom_gradient_checkpointing import custom_checkpoint
 
+
 def RMSNorm(x, eps=1e-6):
     return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+
 
 class QuantizedEmbedding(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, experiment=False):
@@ -51,6 +55,7 @@ class QuantizedEmbedding(nn.Module):
         else:
             quantized_weight = quantize_tensor(self.weight, self.eps).float()
         return nn.functional.embedding(input, quantized_weight)
+
 
 class BitLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=True, num_groups=1):
@@ -77,13 +82,15 @@ class BitLinear(nn.Linear):
         q, scale = quantize_tensor_1_58bit(w_detached, self.eps)
         self.weight_scale = scale
         w_quant = q.float() * scale
-        #w_quant = self.ternarize_weights_groupwise()
+        # w_quant = self.ternarize_weights_groupwise()
         y = nn.functional.linear(x_quant, w_quant)
         return y
+
 
 def rotate_half(x):
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)
+
 
 def apply_rotary_pos_emb(q, k, cos, sin):
     # q: (batch_size, seq_length, hidden_size)
@@ -103,7 +110,10 @@ def apply_rotary_pos_emb(q, k, cos, sin):
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
-    return q_embed.view(batch_size, seq_length, hidden_size), k_embed.view(batch_size, seq_length, hidden_size)
+    return q_embed.view(batch_size, seq_length, hidden_size), k_embed.view(
+        batch_size, seq_length, hidden_size
+    )
+
 
 class LlamaAttention(nn.Module):
     def __init__(self, config):
@@ -126,9 +136,13 @@ class LlamaAttention(nn.Module):
         key_states = self.kv_cache_quant(key_states)
         value_states = self.kv_cache_quant(value_states)
 
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin
+        )
 
-        attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) / math.sqrt(self.head_dim)
+        attention_scores = torch.matmul(
+            query_states, key_states.transpose(-1, -2)
+        ) / math.sqrt(self.head_dim)
 
         if attention_mask is not None:
             attention_scores = attention_scores + attention_mask
@@ -140,12 +154,19 @@ class LlamaAttention(nn.Module):
 
         return attention_output
 
+
 class LlamaMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.gate_proj = BitLinear(config.hidden_size, config.intermediate_size, bias=False)
-        self.down_proj = BitLinear(config.intermediate_size, config.hidden_size, bias=False)
-        self.up_proj = BitLinear(config.hidden_size, config.intermediate_size, bias=False)
+        self.gate_proj = BitLinear(
+            config.hidden_size, config.intermediate_size, bias=False
+        )
+        self.down_proj = BitLinear(
+            config.intermediate_size, config.hidden_size, bias=False
+        )
+        self.up_proj = BitLinear(
+            config.hidden_size, config.intermediate_size, bias=False
+        )
         self.pretraining_tp = config.pretraining_tp
         self.act_quant_8bit = act_quant_8bit
         self.act_quant_4bit = act_quant_4bit
@@ -173,7 +194,9 @@ class LlamaMLP(nn.Module):
             )
 
             intermediate_states = (gate_proj * up_proj).split(slice, dim=2)
-            intermediate_states = [self.act_quant_8bit(state) for state in intermediate_states]  # Quantize intermediate states
+            intermediate_states = [
+                self.act_quant_8bit(state) for state in intermediate_states
+            ]  # Quantize intermediate states
 
             down_proj = [
                 F.linear(intermediate_states[i], down_proj_slices[i])
@@ -190,18 +213,26 @@ class LlamaMLP(nn.Module):
         down_proj = self.act_quant_4bit(down_proj)  # Quantize down_proj
         return down_proj
 
+
 class LlamaDecoderLayer(nn.Module):
     def __init__(self, config, experiment=False):
         super().__init__()
         self.self_attn = LlamaAttention(config)
         self.mlp = LlamaMLP(config)
-        self.norm1 = nn.LayerNorm(config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5))
-        self.norm2 = nn.LayerNorm(config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5))
+        self.norm1 = nn.LayerNorm(
+            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5)
+        )
+        self.norm2 = nn.LayerNorm(
+            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5)
+        )
         self.experiment = experiment
 
     def forward(self, hidden_states, attention_mask, cos, sin):
         residual = hidden_states
-        hidden_states = self.self_attn(hidden_states, attention_mask, cos, sin)
+        # Use gradient checkpointing for the attention block to save memory
+        hidden_states = custom_checkpoint(
+            self.self_attn, hidden_states, attention_mask, cos, sin
+        )
         if self.experiment:
             qw, sw = quantize_tensor_1_58bit(self.norm1.weight)
             qb, sb = quantize_tensor_1_58bit(self.norm1.bias)
@@ -211,7 +242,8 @@ class LlamaDecoderLayer(nn.Module):
         hidden_states = residual + hidden_states
 
         residual = hidden_states
-        hidden_states = self.mlp(hidden_states)
+        # Apply gradient checkpointing to the MLP as well
+        hidden_states = custom_checkpoint(self.mlp, hidden_states)
         if self.experiment:
             qw, sw = quantize_tensor_1_58bit(self.norm2.weight)
             qb, sb = quantize_tensor_1_58bit(self.norm2.bias)
@@ -222,16 +254,26 @@ class LlamaDecoderLayer(nn.Module):
 
         return hidden_states
 
+
 class LlamaModel(nn.Module):
     def __init__(self, config, experiment=False):
         super().__init__()
         self.config = config
-        self.embed_tokens = QuantizedEmbedding(config.vocab_size, config.hidden_size, experiment=experiment)
-        self.layers = nn.ModuleList([LlamaDecoderLayer(config, experiment=experiment) for _ in range(config.num_hidden_layers)])
-        self.norm = nn.LayerNorm(config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5))
+        self.embed_tokens = QuantizedEmbedding(
+            config.vocab_size, config.hidden_size, experiment=experiment
+        )
+        self.layers = nn.ModuleList(
+            [
+                LlamaDecoderLayer(config, experiment=experiment)
+                for _ in range(config.num_hidden_layers)
+            ]
+        )
+        self.norm = nn.LayerNorm(
+            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5)
+        )
 
         # Add lm_head
-        #self.lm_head = BitLinear(config.hidden_size, config.vocab_size, bias=False)
+        # self.lm_head = BitLinear(config.hidden_size, config.vocab_size, bias=False)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         # Initialize embed_positions method
@@ -247,8 +289,16 @@ class LlamaModel(nn.Module):
 
         def _embed_positions(position_ids):
             batch_size, seq_length = position_ids.shape
-            position_embeddings = torch.zeros(batch_size, seq_length, hidden_size, device=position_ids.device)
-            inv_freq = 1.0 / (10000 ** (torch.arange(0, hidden_size, 2, device=position_ids.device) / hidden_size))
+            position_embeddings = torch.zeros(
+                batch_size, seq_length, hidden_size, device=position_ids.device
+            )
+            inv_freq = 1.0 / (
+                10000
+                ** (
+                    torch.arange(0, hidden_size, 2, device=position_ids.device)
+                    / hidden_size
+                )
+            )
             sinusoid_inp = torch.einsum("bi,j->bij", position_ids, inv_freq)
             position_embeddings[..., 0::2] = torch.sin(sinusoid_inp)
             position_embeddings[..., 1::2] = torch.cos(sinusoid_inp)
@@ -288,11 +338,15 @@ class LlamaModel(nn.Module):
                     next_token_logits = logits_mask
 
                 if top_p is not None and 0 < top_p < 1.0:
-                    sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
-                    cumulative_probs = torch.cumsum(torch.nn.functional.softmax(sorted_logits, dim=-1), dim=-1)
+                    sorted_logits, sorted_indices = torch.sort(
+                        next_token_logits, descending=True
+                    )
+                    cumulative_probs = torch.cumsum(
+                        torch.nn.functional.softmax(sorted_logits, dim=-1), dim=-1
+                    )
                     sorted_indices_to_remove = cumulative_probs > top_p
-                    sorted_logits[sorted_indices_to_remove] = float('-inf')
-                    logits_mask = torch.full_like(next_token_logits, float('-inf'))
+                    sorted_logits[sorted_indices_to_remove] = float("-inf")
+                    logits_mask = torch.full_like(next_token_logits, float("-inf"))
                     logits_mask.scatter_(-1, sorted_indices, sorted_logits)
                     next_token_logits = logits_mask
 
@@ -302,11 +356,18 @@ class LlamaModel(nn.Module):
                 next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
             generated = torch.cat([generated, next_token], dim=1)
-            if self.config.eos_token_id is not None and (next_token == self.config.eos_token_id).all():
+            if (
+                self.config.eos_token_id is not None
+                and (next_token == self.config.eos_token_id).all()
+            ):
                 break
 
             if attention_mask is not None:
-                new_mask = torch.ones((attention_mask.size(0), 1), device=device, dtype=attention_mask.dtype)
+                new_mask = torch.ones(
+                    (attention_mask.size(0), 1),
+                    device=device,
+                    dtype=attention_mask.dtype,
+                )
                 attention_mask = torch.cat([attention_mask, new_mask], dim=1)
 
         return generated
@@ -353,9 +414,12 @@ class LlamaModel(nn.Module):
         if AutoTokenizer is None:
             raise ImportError("transformers is required to save pretrained models")
         from quantized_model_io import save_quantized_model
+
         # Update the model configuration with the quantized model's parameters
         self.config.hidden_size = self.embed_tokens.embedding_dim
-        self.config.num_attention_heads = self.config.hidden_size // self.layers[0].self_attn.head_dim
+        self.config.num_attention_heads = (
+            self.config.hidden_size // self.layers[0].self_attn.head_dim
+        )
         self.config.num_hidden_layers = len(self.layers)
         self.config.intermediate_size = self.layers[0].mlp.gate_proj.out_features
         self.config.max_position_embeddings = self.embed_tokens.num_embeddings
@@ -394,8 +458,12 @@ class LlamaModel(nn.Module):
         if hasattr(self.config, "pretraining_tp"):
             self.config.pretraining_tp = self.config.pretraining_tp
 
-        self.config.bos_token_id = self.config.bos_token_id if hasattr(self.config, "bos_token_id") else None
-        self.config.eos_token_id = self.config.eos_token_id if hasattr(self.config, "eos_token_id") else None
+        self.config.bos_token_id = (
+            self.config.bos_token_id if hasattr(self.config, "bos_token_id") else None
+        )
+        self.config.eos_token_id = (
+            self.config.eos_token_id if hasattr(self.config, "eos_token_id") else None
+        )
         self.config.torch_dtype = str(self.embed_tokens.weight.dtype).split(".")[-1]
         self.config.transformers_version = "4.39.0.dev0"
 
@@ -403,12 +471,19 @@ class LlamaModel(nn.Module):
         self.config.save_pretrained(save_directory)
 
         # Load the pre-trained LLaMA tokenizer
-        tokenizer = AutoTokenizer.from_pretrained("DeepInfra/Llama-2-70b-chat-tokenizer")
+        tokenizer = AutoTokenizer.from_pretrained(
+            "DeepInfra/Llama-2-70b-chat-tokenizer"
+        )
         # Save the tokenizer files to the save directory
         tokenizer.save_pretrained(save_directory)
 
         # Copy additional tokenizer files if available
-        additional_files = ["tokenizer.model", "tokenizer_config.json", "tokenizer.json", "special_tokens_map.json"]
+        additional_files = [
+            "tokenizer.model",
+            "tokenizer_config.json",
+            "tokenizer.json",
+            "special_tokens_map.json",
+        ]
         for file_name in additional_files:
             src_path = os.path.join("DeepInfra/Llama-2-70b-chat-tokenizer", file_name)
             dst_path = os.path.join(save_directory, file_name)
@@ -417,11 +492,13 @@ class LlamaModel(nn.Module):
 
         save_quantized_model(self, save_directory)
 
-    def save_sharded_safetensors(self, output_path, shard_size=9*1024*1024*1024):
+    def save_sharded_safetensors(self, output_path, shard_size=9 * 1024 * 1024 * 1024):
         if save_file is None:
             raise ImportError("safetensors is required to save sharded weights")
         state_dict = self.state_dict()
-        num_shards = math.ceil(sum(v.numel() * v.element_size() for v in state_dict.values()) / shard_size)
+        num_shards = math.ceil(
+            sum(v.numel() * v.element_size() for v in state_dict.values()) / shard_size
+        )
 
         os.makedirs(output_path, exist_ok=True)
 
@@ -434,7 +511,9 @@ class LlamaModel(nn.Module):
             shard_size_bytes += value.numel() * value.element_size()
 
             if shard_size_bytes >= shard_size:
-                shard_file = os.path.join(output_path, f"model-{shard_id:05d}-of-{num_shards:05d}.safetensors")
+                shard_file = os.path.join(
+                    output_path, f"model-{shard_id:05d}-of-{num_shards:05d}.safetensors"
+                )
                 save_file(shard_state_dict, shard_file)
                 print(f"Saved shard {shard_id} at: {shard_file}")
 
@@ -443,11 +522,15 @@ class LlamaModel(nn.Module):
                 shard_size_bytes = 0
 
         if shard_state_dict:
-            shard_file = os.path.join(output_path, f"model-{shard_id:05d}-of-{num_shards:05d}.safetensors")
+            shard_file = os.path.join(
+                output_path, f"model-{shard_id:05d}-of-{num_shards:05d}.safetensors"
+            )
             save_file(shard_state_dict, shard_file)
             print(f"Saved shard {shard_id} at: {shard_file}")
 
-    def create_additional_files(self, save_directory, model_path, state_dicts, num_shards):
+    def create_additional_files(
+        self, save_directory, model_path, state_dicts, num_shards
+    ):
         # Create model.safetensors.index.json
         weight_map = {}
         total_size = 0
@@ -458,13 +541,10 @@ class LlamaModel(nn.Module):
             for v in state_dict.values():
                 total_size += math.ceil(v.numel() * 1.58 / 8) + v.dim() * 4
 
-        index_data = {
-            "metadata": {
-                "total_size": total_size
-            },
-            "weight_map": weight_map
-        }
-        with open(os.path.join(save_directory, "model.safetensors.index.json"), "w") as f:
+        index_data = {"metadata": {"total_size": total_size}, "weight_map": weight_map}
+        with open(
+            os.path.join(save_directory, "model.safetensors.index.json"), "w"
+        ) as f:
             json.dump(index_data, f, indent=4)
 
         # Create generation_config.json
