@@ -9,7 +9,7 @@ import torch
 from llama_model import LlamaModel
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 from grpo_data import load_qa_dataset, build_grpo_batch, f1_reward
-from reward_utils import qa_reward
+from reward_utils import qa_reward, accuracy_reward
 from reward_model import RewardModel, load_reward_models
 from training_utils import save_checkpoint, load_checkpoint, cosine_lr_wd
 
@@ -149,6 +149,15 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--clip_eps", type=float, default=0.2)
     parser.add_argument("--beta", type=float, default=0.01)
+    parser.add_argument(
+        "--improvement_threshold",
+        type=float,
+        default=0.05,
+        help=(
+            "Reward margin required for a correction to be considered an"
+            " improvement when the final answer is not exactly correct"
+        ),
+    )
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
     parser.add_argument("--two_layer", action="store_true", help="Use MultiLayer GRPO")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from checkpoint")
@@ -201,9 +210,29 @@ def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentP
     args.guiding_prompt = parse_guiding_prompts(args.guiding_prompt)
 
 
-def simple_improvement_verifier(new_reward: float, old_reward: float, threshold: float = 0.05) -> bool:
-    """Return True if ``new_reward`` exceeds ``old_reward`` by ``threshold``."""
-    return (new_reward - old_reward) > threshold
+def simple_improvement_verifier(
+    new_reward: float,
+    old_reward: float,
+    new_text: str | None = None,
+    reference: str | list[str] | None = None,
+    *,
+    threshold: float = 0.05,
+) -> bool:
+    """Return ``True`` when the correction is an improvement.
+
+    A correction counts as an improvement when either the final answer is
+    exactly correct or when the reward increases by more than ``threshold``.
+    ``new_text`` and ``reference`` are optional; when provided the final answer
+    accuracy is checked using :func:`accuracy_reward`.
+    """
+
+    accurate = False
+    if new_text is not None and reference is not None:
+        refs = reference if isinstance(reference, (list, tuple)) else [reference]
+        accurate = any(
+            accuracy_reward(new_text, ref) == 1.0 for ref in refs
+        )
+    return accurate or (new_reward - old_reward) > threshold
 
 def main():
     parser = get_arg_parser()
@@ -262,7 +291,13 @@ def main():
             guiding_prompt=args.guiding_prompt,
             clip_eps=args.clip_eps,
             beta=args.beta,
-            verifier=simple_improvement_verifier,
+            verifier=lambda new, old, text=None, ref=None: simple_improvement_verifier(
+                new,
+                old,
+                text,
+                ref,
+                threshold=args.improvement_threshold,
+            ),
             second_max_length=args.second_max_length,
             augmentation_size=args.augmentation_size,
         )
@@ -314,7 +349,16 @@ def main():
         if args.two_layer:
             answers_holder["answers"] = [s["answer"] for s in batch]
             log_n = NUM_LOG_TEXT if csv_writer else 0
-            res = trainer.train_batch(q, ql, r, l, rew, optimizer, log_texts=log_n)
+            res = trainer.train_batch(
+                q,
+                ql,
+                r,
+                l,
+                rew,
+                optimizer,
+                log_texts=log_n,
+                references=answers_holder["answers"],
+            )
             if log_n:
                 loss, rate, corrected_texts = res
             else:

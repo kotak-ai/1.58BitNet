@@ -73,5 +73,31 @@ class ConfigTest(unittest.TestCase):
         ])
         self.assertEqual(args.reward_model, ["a.pt", "b.pt"])
         self.assertEqual(args.reward_weights, [0.4, 0.6])
+
+    def test_improvement_threshold(self):
+        parser = get_arg_parser()
+        cfg = {"improvement_threshold": 0.2}
+        with open("cfg_thr.json", "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+        args = parser.parse_args([
+            "--dataset",
+            "d.json",
+            "--model_path",
+            "m",
+            "--config",
+            "cfg_thr.json",
+        ])
+        update_args_with_config(args, parser)
+        self.assertEqual(args.improvement_threshold, 0.2)
+        args = parser.parse_args([
+            "--dataset",
+            "d.json",
+            "--model_path",
+            "m",
+            "--improvement_threshold",
+            "0.1",
+        ])
+        update_args_with_config(args, parser)
+        self.assertEqual(args.improvement_threshold, 0.1)
 if __name__ == "__main__":
     unittest.main()
