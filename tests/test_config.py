@@ -70,13 +70,16 @@ class ConfigTest(unittest.TestCase):
             "--reward_weights",
             "0.4",
             "0.6",
+            "--rule_weight",
+            "0.3",
         ])
         self.assertEqual(args.reward_model, ["a.pt", "b.pt"])
         self.assertEqual(args.reward_weights, [0.4, 0.6])
+        self.assertAlmostEqual(args.rule_weight, 0.3)
 
     def test_improvement_threshold(self):
         parser = get_arg_parser()
-        cfg = {"improvement_threshold": 0.2}
+        cfg = {"improvement_threshold": 0.2, "rule_weight": 0.7}
         with open("cfg_thr.json", "w", encoding="utf-8") as f:
             json.dump(cfg, f)
         args = parser.parse_args([
@@ -89,6 +92,7 @@ class ConfigTest(unittest.TestCase):
         ])
         update_args_with_config(args, parser)
         self.assertEqual(args.improvement_threshold, 0.2)
+        self.assertAlmostEqual(args.rule_weight, 0.7)
         args = parser.parse_args([
             "--dataset",
             "d.json",

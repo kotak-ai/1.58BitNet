@@ -202,6 +202,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional weights for each reward model",
     )
+    parser.add_argument(
+        "--rule_weight",
+        type=float,
+        default=0.5,
+        help="Weight for rule-based reward when combining with models",
+    )
     parser.add_argument("--log_interval", type=int, default=10, help="Steps between logging metrics")
     parser.add_argument(
         "--csv_log",
@@ -244,6 +250,8 @@ def update_args_with_config(args: argparse.Namespace, parser: argparse.ArgumentP
             cfg["guiding_schedule"] = parse_int_list(cfg["guiding_schedule"])
         if "guiding_probabilities" in cfg:
             cfg["guiding_probabilities"] = parse_float_list(cfg["guiding_probabilities"])
+        if "rule_weight" in cfg:
+            cfg["rule_weight"] = float(cfg["rule_weight"])
         for key, value in cfg.items():
             old_default = parser.get_default(key)
             parser.set_defaults(**{key: value})
@@ -313,11 +321,16 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
     if args.reward_model:
-        reward_fn = load_reward_models(
+        model_reward = load_reward_models(
             args.reward_model,
             tokenizer,
             weights=args.reward_weights,
         )
+
+        def reward_fn(gen: str, ref: str, query: str) -> float:
+            rule = qa_reward(gen, ref)
+            model_val = model_reward(gen, ref, query)
+            return args.rule_weight * rule + (1.0 - args.rule_weight) * model_val
     else:
         def reward_fn(gen: str, ref: str, query: str) -> float:
             return qa_reward(gen, ref)
@@ -326,8 +339,12 @@ def main():
     if args.two_layer:
         answers_holder = {"answers": []}
 
-        def second_layer_reward(text: str) -> float:
-            return max(qa_reward(text, a) for a in answers_holder["answers"])
+        def second_layer_reward(text: str, ref: str | None = None, query: str | None = None) -> float:
+            rule = max(qa_reward(text, a) for a in answers_holder["answers"])
+            if args.reward_model and ref is not None and query is not None:
+                model_val = model_reward(text, ref, query)
+                return args.rule_weight * rule + (1.0 - args.rule_weight) * model_val
+            return rule
 
         trainer = MultiLayerGRPOTrainer(
             model,

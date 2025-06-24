@@ -70,10 +70,11 @@ dataset should be JSON or JSONL with one object per record:
 {"query": "...", "answer": "..."}
 ```
 
-During training candidate answers are generated for each query and scored. If
-one or more `--reward_model` checkpoints are provided the scores from each model
-are combined (optionally weighted with `--reward_weights`) to approximate dense
-feedback. Without a reward model the robust F1 reward from `qa_reward` is used.
+During training candidate answers are generated for each query and scored.  The
+robust F1 reward from `qa_reward` can be mixed with one or more
+`--reward_model` checkpoints.  Model scores are combined (optionally weighted
+with `--reward_weights`) then interpolated with the rule-based reward using
+`--rule_weight`.  When no reward model is supplied, only the F1 reward is used.
 
 Optional features:
 
@@ -87,6 +88,8 @@ Optional features:
   answers for inspection.
 - `--resume CKPT` &ndash; resume training from a checkpoint created with
   `save_checkpoint`.
+- `--rule_weight` &ndash; weight assigned to the rule-based F1 reward when
+  combining with external reward models.
 - `--guiding_probabilities` &ndash; probabilities corresponding to each entry in
   `--guiding_prompt` for weighted random selection.
 - `--guiding_schedule` &ndash; sequence of prompt indices determining which
@@ -145,7 +148,7 @@ Example command for GRPO with two reward models:
 
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
-    --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 \
+    --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 --rule_weight 0.5 \
     --output_dir grpo_model
 ```
 
@@ -165,7 +168,7 @@ prompts. By default a prompt is chosen at random for each correction. Pass
 
 ```bash
 python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
-    --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 \
+    --reward_model rm1.ckpt rm2.ckpt --reward_weights 0.7 0.3 --rule_weight 0.5 \
     --output_dir grpo_model --two_layer --guiding_prompt prompts.txt
 ```
 Here `prompts.txt` contains one prompt per line (or a JSON list) used for the
