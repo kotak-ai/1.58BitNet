@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Tuple, Callable
+from typing import List, Tuple, Callable, Sequence
 
 import copy
 import random
@@ -147,6 +147,7 @@ class MultiLayerGRPOTrainer:
         rewards: torch.Tensor,
         optimizer: torch.optim.Optimizer,
         log_texts: int = 0,
+        references: Sequence[str] | None = None,
     ) -> Tuple[torch.Tensor, float] | Tuple[torch.Tensor, float, list[str]]:
         """Train using two GRPO passes and measure improvement.
 
@@ -193,7 +194,19 @@ class MultiLayerGRPOTrainer:
                     if self.verifier is None:
                         improved = reward_val > base_reward
                     else:
-                        improved = bool(self.verifier(reward_val, base_reward))
+                        ref = references[b] if references is not None else None
+                        try:
+                            improved = bool(
+                                self.verifier(
+                                    reward_val,
+                                    base_reward,
+                                    text,
+                                    ref,
+                                )
+                            )
+                        except TypeError:
+                            # Backwards compatibility with two-argument verifiers
+                            improved = bool(self.verifier(reward_val, base_reward))
                     if improved:
                         success += 1
                         if len(log_text_list) < log_texts:
