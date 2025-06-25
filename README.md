@@ -397,16 +397,29 @@ python reward_train.py --pairs pairs.jsonl --tokenizer path/to/tokenizer
 ## Energy RL Demo
 
 The repository also includes a small reinforcement learning environment to
-experiment with energy‑aware scheduling. The `energy_rl_train.py` script trains a
-tabular Q‑learning agent and reports the average reward before and after
-training. Environment parameters can be customised on the command line:
+experiment with energy‑aware scheduling. This environment is **independent of
+the GRPO training scripts** and serves solely as a demonstration. The
+`energy_rl_train.py` script trains a tabular Q‑learning agent and reports the
+average reward before and after training. Environment parameters can be
+customised on the command line:
 
 ```bash
 python energy_rl_train.py --episodes 100 --max_steps 20 --harvest_rate 3
 ```
 
 This prints the initial and final rewards so you can verify the agent learns a
-better policy.
+better policy. Once trained the agent can also control scheduling during
+inference. The `energy_inference_schedule.py` script trains a short policy and
+lets it decide when tokens are generated:
+
+```bash
+python energy_inference_schedule.py --model_path path/to/model \
+    --prompt "Hello" --tokens 20
+```
+
+Compute actions produce new tokens while idle or cool actions simply update the
+energy state. This shows how reinforcement learning could influence inference
+scheduling.
 
 ## Running the Tests
 
