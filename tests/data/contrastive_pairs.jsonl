@@ -1,0 +1,2 @@
+{"query": "hi", "positive": "there", "negative": "wrong"}
+{"query": "bye", "positive": "ok", "negative": "no"}

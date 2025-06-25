@@ -386,6 +386,14 @@ python simple_reward_model.py --epochs 100 --lr 0.1
 The demo prints higher scores for correct answers and can be extended to create
 custom reward models for GRPO training.
 
+`reward_train.py` trains the larger Transformer-based `RewardModel`. Provide a
+labelled dataset with `--dataset` or a file of positive/negative pairs with
+`--pairs`:
+
+```bash
+python reward_train.py --pairs pairs.jsonl --tokenizer path/to/tokenizer
+```
+
 ## Energy RL Demo
 
 The repository also includes a small reinforcement learning environment to

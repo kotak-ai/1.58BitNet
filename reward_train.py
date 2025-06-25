@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 import random
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import torch
 from transformers import AutoTokenizer
@@ -22,6 +22,8 @@ def load_labelled_dataset(path: str) -> List[Dict[str, object]]:
     if path.endswith(".jsonl"):
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
+                if not line.strip():
+                    continue
                 obj = json.loads(line)
                 data.append({
                     "query": obj["query"],
@@ -41,6 +43,33 @@ def load_labelled_dataset(path: str) -> List[Dict[str, object]]:
     return data
 
 
+def load_pair_dataset(path: str) -> List[Dict[str, str]]:
+    """Load a dataset of ``{"query":..., "positive":..., "negative":...}``."""
+    data: List[Dict[str, str]] = []
+    if path.endswith(".jsonl"):
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                obj = json.loads(line)
+                data.append({
+                    "query": obj["query"],
+                    "positive": obj["positive"],
+                    "negative": obj["negative"],
+                })
+    elif path.endswith(".json"):
+        with open(path, "r", encoding="utf-8") as f:
+            for obj in json.load(f):
+                data.append({
+                    "query": obj["query"],
+                    "positive": obj["positive"],
+                    "negative": obj["negative"],
+                })
+    else:
+        raise ValueError("Unsupported dataset format")
+    return data
+
+
 def batch_iterator(dataset: List[Dict[str, object]], batch_size: int):
     indices = list(range(len(dataset)))
     random.shuffle(indices)
@@ -53,8 +82,9 @@ def batch_iterator(dataset: List[Dict[str, object]], batch_size: int):
 def train(
     model: RewardModel,
     tokenizer,
-    dataset: List[Dict[str, object]],
+    dataset: Optional[List[Dict[str, object]]] = None,
     *,
+    pairs: Optional[List[Dict[str, str]]] = None,
     epochs: int = 1,
     batch_size: int = 8,
     lr: float = 1e-4,
@@ -72,37 +102,68 @@ def train(
     if progress and tqdm is not None:
         iterator = tqdm(iterator, total=epochs)
     for _ in iterator:
-        for batch in batch_iterator(dataset, batch_size):
-            scores = []
-            labels = []
-            for item in batch:
-                q_ids = torch.tensor(
-                    tokenizer.encode(item["query"], add_special_tokens=False),
-                    dtype=torch.long,
-                )
-                a_ids = torch.tensor(
-                    tokenizer.encode(item["answer"], add_special_tokens=False),
-                    dtype=torch.long,
-                )
-                score = model._score_ids(q_ids, a_ids)
-                scores.append(score)
-                labels.append(float(item["label"]))
-            logits = torch.stack(scores)
-            tgt = torch.tensor(labels, dtype=torch.float32)
-            loss = loss_fn(logits, tgt)
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            step += 1
-            if resume and save_interval and step % save_interval == 0:
-                save_checkpoint(model, optimizer, step, resume)
+        if pairs is not None:
+            for batch in batch_iterator(pairs, batch_size):
+                queries = [
+                    tokenizer.encode(it["query"], add_special_tokens=False)
+                    for it in batch
+                ]
+                positives = [
+                    tokenizer.encode(it["positive"], add_special_tokens=False)
+                    for it in batch
+                ]
+                negatives = [
+                    tokenizer.encode(it["negative"], add_special_tokens=False)
+                    for it in batch
+                ]
+                loss = model.contrastive_loss(queries, positives, negatives)
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
+                step += 1
+                if resume and save_interval and step % save_interval == 0:
+                    save_checkpoint(model, optimizer, step, resume)
+        elif dataset is not None:
+            for batch in batch_iterator(dataset, batch_size):
+                scores = []
+                labels = []
+                for item in batch:
+                    q_ids = torch.tensor(
+                        tokenizer.encode(item["query"], add_special_tokens=False),
+                        dtype=torch.long,
+                    )
+                    a_ids = torch.tensor(
+                        tokenizer.encode(item["answer"], add_special_tokens=False),
+                        dtype=torch.long,
+                    )
+                    score = model._score_ids(q_ids, a_ids)
+                    scores.append(score)
+                    labels.append(float(item["label"]))
+                logits = torch.stack(scores)
+                tgt = torch.tensor(labels, dtype=torch.float32)
+                loss = loss_fn(logits, tgt)
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
+                step += 1
+                if resume and save_interval and step % save_interval == 0:
+                    save_checkpoint(model, optimizer, step, resume)
+        else:
+            raise ValueError("No training data provided")
     if resume:
         save_checkpoint(model, optimizer, step, resume)
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train a RewardModel")
-    parser.add_argument("--dataset", required=True, help="JSON or JSONL dataset")
+    parser.add_argument(
+        "--dataset",
+        help="JSON or JSONL dataset with 'query', 'answer' and 'label' fields",
+    )
+    parser.add_argument(
+        "--pairs",
+        help="JSON or JSONL dataset with 'query', 'positive' and 'negative' fields",
+    )
     parser.add_argument(
         "--tokenizer",
         required=True,
@@ -129,8 +190,11 @@ def get_arg_parser() -> argparse.ArgumentParser:
 def main(argv: List[str] | None = None) -> None:
     parser = get_arg_parser()
     args = parser.parse_args(argv)
+    if not args.dataset and not args.pairs:
+        parser.error("one of --dataset or --pairs is required")
 
-    dataset = load_labelled_dataset(args.dataset)
+    dataset = load_labelled_dataset(args.dataset) if args.dataset else None
+    pairs = load_pair_dataset(args.pairs) if args.pairs else None
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     model = RewardModel(
         vocab_size=tokenizer.vocab_size,
@@ -144,6 +208,7 @@ def main(argv: List[str] | None = None) -> None:
         model,
         tokenizer,
         dataset,
+        pairs=pairs,
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
