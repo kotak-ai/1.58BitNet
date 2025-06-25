@@ -4,6 +4,7 @@ import torch.nn as nn
 from transformers import LlamaConfig
 from quantization_utils import activation_quant, quantize_tensor_1_58bit
 from llama_model import LlamaModel, BitLinear
+from model_utils import count_parameters, verify_parameter_count
 from tqdm import tqdm
 import os
 import time
@@ -108,6 +109,8 @@ assert 300_000_000 <= num_params <= 200_000_000_000, "Number of parameters must 
 # Calculate the model dimensions based on the desired number of parameters
 config = calculate_model_dimensions(num_params)
 model = LlamaModel(config, experiment=args.e)
+actual_params = count_parameters(model)
+verify_parameter_count(actual_params, num_params)
 
 # Move the model to the appropriate device
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")

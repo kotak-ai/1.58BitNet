@@ -45,6 +45,8 @@ Use `new-model-architecture-creation.py` to generate a blank ternary model.
 Specify the desired parameter count on the command line. The model is written
 to `--output_dir` if provided, otherwise `llama_<params>_ternary_quantized_optimized`.
 Passing `--e` enables an experimental quantisation mode.
+The script now verifies the resulting model size and fails if the parameter
+count differs from the request by more than 1%.
 
 ```bash
 python new-model-architecture-creation.py --params 750M --output_dir llama_750M
