@@ -190,6 +190,28 @@ python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
     --output_dir grpo_model --grad_checkpoint
 ```
 
+### Training with multiple reward models
+
+The repository provides `scripts/grpo_two_rewards.sh` as a minimal example of
+mixing two reward models with custom weights. The same setup can be described in
+JSON and passed via `--config`:
+
+```json
+{
+  "reward_model": ["rm1.ckpt", "rm2.ckpt"],
+  "reward_weights": [0.7, 0.3],
+  "rule_weight": 0.5,
+  "steps": 1000
+}
+```
+
+Save this as `scripts/two_reward_config.json` then run:
+
+```bash
+python grpo_train.py --dataset qa.jsonl --model_path llama_750m \
+    --config scripts/two_reward_config.json --output_dir grpo_model
+```
+
 ## Two-Layer Self-Correction
 
 Passing `--two_layer` enables a second GRPO pass that attempts to refine the first answer.

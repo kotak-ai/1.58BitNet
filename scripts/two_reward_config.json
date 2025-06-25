@@ -1,0 +1,6 @@
+{
+  "reward_model": ["rm1.ckpt", "rm2.ckpt"],
+  "reward_weights": [0.7, 0.3],
+  "rule_weight": 0.5,
+  "steps": 1000
+}
