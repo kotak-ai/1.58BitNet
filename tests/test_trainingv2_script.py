@@ -108,5 +108,35 @@ class ScriptCheckpointTest(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+
+class EvalHookTest(unittest.TestCase):
+    def test_run_eval_invokes_evaluation(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            data_path = os.path.join(tmp, "data.jsonl")
+            with open(data_path, "w") as f:
+                f.write('{"text": "ab"}\n')
+            parser = trainingv2.get_arg_parser()
+            args = parser.parse_args([
+                '--dataset', data_path,
+                '--model_path', tmp,
+                '--output_dir', tmp,
+                '--iters', '1',
+                '--batch_size', '1',
+                '--run_eval',
+                '--eval_dataset', data_path,
+            ])
+            def _iter_batches(*a, **k):
+                yield (torch.tensor([[0]]), torch.tensor([[0]]), torch.tensor([1]))
+            with mock.patch.object(trainingv2, 'LlamaConfig', DummyConfig), \
+                 mock.patch.object(trainingv2, 'AutoTokenizer', DummyTokenizer), \
+                 mock.patch.object(trainingv2, 'LlamaModel', DummyModel), \
+                 mock.patch.object(trainingv2, 'iterate_batches', _iter_batches), \
+                 mock.patch('trainingv2.evaluation.run') as eval_run:
+                trainingv2.run(args)
+                eval_run.assert_called_once()
+        finally:
+            shutil.rmtree(tmp)
+
 if __name__ == '__main__':
     unittest.main()

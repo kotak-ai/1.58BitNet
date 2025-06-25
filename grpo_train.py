@@ -6,6 +6,7 @@ import csv
 import os
 from typing import List
 import torch
+import evaluation
 from llama_model import LlamaModel
 from grpo import GRPOTrainer, MultiLayerGRPOTrainer
 from grpo_data import load_qa_dataset, build_grpo_batch, f1_reward
@@ -247,6 +248,41 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Optional sequence of prompt indices selecting which guiding prompt to use at each step",
     )
     parser.add_argument("--progress", action="store_true", help="Show progress bar if tqdm is available")
+    parser.add_argument(
+        "--run_eval",
+        action="store_true",
+        help="Run evaluation.py after training",
+    )
+    parser.add_argument(
+        "--eval_dataset",
+        type=str,
+        default=None,
+        help="Dataset for post-training evaluation",
+    )
+    parser.add_argument(
+        "--eval_task",
+        choices=["qa", "reasoning"],
+        default="qa",
+        help="Evaluation dataset type",
+    )
+    parser.add_argument(
+        "--eval_ce_model",
+        type=str,
+        default=None,
+        help="Baseline CE model path (defaults to --model_path)",
+    )
+    parser.add_argument(
+        "--eval_max_length",
+        type=int,
+        default=20,
+        help="Max length for evaluation generation",
+    )
+    parser.add_argument(
+        "--eval_csv",
+        type=str,
+        default=None,
+        help="CSV file to log evaluation metrics",
+    )
     return parser
 
 
@@ -511,6 +547,20 @@ def main():
         save_checkpoint(model, optimizer, args.steps, args.resume)
     if csv_writer:
         csv_file.close()
+
+    if args.run_eval and args.eval_dataset:
+        ce_model = args.eval_ce_model or args.model_path
+        evaluation.run(
+            args.eval_dataset,
+            ce_model,
+            args.output_dir,
+            max_length=args.eval_max_length,
+            task=args.eval_task,
+            two_layer=args.two_layer,
+            guiding_prompt=args.guiding_prompt[0] if args.guiding_prompt else "Review and correct the answer:",
+            second_max_length=args.second_max_length,
+            csv_log=args.eval_csv,
+        )
 
 
 if __name__ == "__main__":

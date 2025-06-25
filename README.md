@@ -73,6 +73,10 @@ compute.
 python trainingv2.py --dataset path/to/data.jsonl --model_path path/to/model --output_dir ce_out --iters 1000
 ```
 
+Pass `--run_eval` along with `--eval_dataset` to automatically evaluate the
+new model against the original checkpoint using `evaluation.py`. Metrics are
+printed to the console and can be appended to a CSV file via `--eval_csv`.
+
 ## GRPO Training
 
 `grpo_train.py` implements Grouped Response Policy Optimisation (GRPO).  The
@@ -104,6 +108,8 @@ Optional features:
   to save memory.
 - `--rule_weight` &ndash; weight assigned to the rule-based F1 reward when
   combining with external reward models.
+- `--run_eval` &ndash; evaluate the final model using `evaluation.py` after
+  training. Requires `--eval_dataset` and optionally `--eval_csv`.
 - Reward models now support **dense** scoring. When available the training
   loop consumes a sequence of per-token rewards instead of a single scalar.
 - `--guiding_probabilities` &ndash; probabilities corresponding to each entry in
@@ -150,6 +156,10 @@ averaged over tokens.
 python grpo_train.py --config scripts/paper_config.json --dataset qa.jsonl \
     --model_path path/to/model --output_dir grpo_out --csv_log metrics.csv
 ```
+
+Include `--run_eval` with an evaluation dataset to score the resulting model
+immediately after training. Use `--eval_csv` to append these metrics to a log
+file.
 
 ## Hardware and Example Commands
 

@@ -6,6 +6,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, LlamaConfig
 from safetensors.torch import load_file
 from llama_model import LlamaModel
+import evaluation
 from training_utils import save_checkpoint, load_checkpoint, cosine_lr_wd
 from custom_gradient_checkpointing import custom_checkpoint
 from tqdm import tqdm
@@ -234,6 +235,41 @@ def get_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Wrap forward pass with custom_checkpoint to save memory",
     )
+    parser.add_argument(
+        "--run_eval",
+        action="store_true",
+        help="Run evaluation.py after training",
+    )
+    parser.add_argument(
+        "--eval_dataset",
+        type=str,
+        default=None,
+        help="Dataset for post-training evaluation",
+    )
+    parser.add_argument(
+        "--eval_task",
+        choices=["qa", "reasoning"],
+        default="qa",
+        help="Evaluation dataset type",
+    )
+    parser.add_argument(
+        "--eval_ce_model",
+        type=str,
+        default=None,
+        help="Baseline CE model path (defaults to --model_path)",
+    )
+    parser.add_argument(
+        "--eval_max_length",
+        type=int,
+        default=20,
+        help="Max length for evaluation generation",
+    )
+    parser.add_argument(
+        "--eval_csv",
+        type=str,
+        default=None,
+        help="CSV file to log evaluation metrics",
+    )
     return parser
 
 
@@ -277,6 +313,16 @@ def run(args: argparse.Namespace):
         use_checkpoint=args.grad_checkpoint,
     )
     model.save_pretrained(args.output_dir)
+    if args.run_eval and args.eval_dataset:
+        ce_model = args.eval_ce_model or args.model_path
+        evaluation.run(
+            args.eval_dataset,
+            ce_model,
+            args.output_dir,
+            max_length=args.eval_max_length,
+            task=args.eval_task,
+            csv_log=args.eval_csv,
+        )
     return model
 
 

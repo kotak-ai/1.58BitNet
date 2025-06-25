@@ -1,4 +1,6 @@
 import argparse
+import csv
+import os
 import torch
 from llama_model import LlamaModel
 from grpo_data import (
@@ -148,6 +150,16 @@ def evaluate_reasoning_model(
     return metrics
 
 
+def _log_csv(row: dict, path: str) -> None:
+    """Append ``row`` to ``path`` writing a header when the file is new."""
+    write_header = not os.path.exists(path)
+    with open(path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def get_arg_parser() -> argparse.ArgumentParser:
     """Return an argument parser for the CLI."""
     parser = argparse.ArgumentParser(description="Evaluate GRPO vs CE models")
@@ -178,6 +190,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
         default=20,
         help="Tokens to generate for the correction",
     )
+    parser.add_argument(
+        "--csv_log",
+        type=str,
+        default=None,
+        help="Optional CSV file to log metrics",
+    )
     return parser
 
 
@@ -191,6 +209,7 @@ def run(
     two_layer: bool = False,
     guiding_prompt: str = "Review and correct the answer:",
     second_max_length: int = 20,
+    csv_log: str | None = None,
 ) -> dict:
     """Evaluate the CE and GRPO models and return the metrics."""
     if dataset.lower() == "math":
@@ -234,7 +253,10 @@ def run(
         )
         print(f"CE model F1: {ce_score:.4f}")
         print(f"GRPO model F1: {grpo_score:.4f}")
-        return {"ce_f1": ce_score, "grpo_f1": grpo_score}
+        metrics = {"ce_f1": ce_score, "grpo_f1": grpo_score}
+        if csv_log:
+            _log_csv(metrics, csv_log)
+        return metrics
     ce_metrics = evaluate_reasoning_model(
         ce,
         ce_tok,
@@ -271,7 +293,12 @@ def run(
         ce_str = f"{ce_val:.4f}" if ce_val is not None else "-"
         grpo_str = f"{grpo_val:.4f}" if grpo_val is not None else "-"
         print(f"{key:<18}{ce_str:>12}{grpo_str:>12}")
-    return {"ce": ce_metrics, "grpo": grpo_metrics}
+    result = {"ce": ce_metrics, "grpo": grpo_metrics}
+    if csv_log:
+        flat = {f"ce_{k}": v for k, v in ce_metrics.items()}
+        flat.update({f"grpo_{k}": v for k, v in grpo_metrics.items()})
+        _log_csv(flat, csv_log)
+    return result
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -287,6 +314,7 @@ def main(argv: list[str] | None = None) -> None:
         two_layer=args.two_layer,
         guiding_prompt=args.guiding_prompt,
         second_max_length=args.second_max_length,
+        csv_log=args.csv_log,
     )
 
 
