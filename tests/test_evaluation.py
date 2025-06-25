@@ -1,5 +1,9 @@
 import unittest
 import torch
+import os
+import csv
+import tempfile
+import evaluation
 from evaluation import evaluate_model, evaluate_reasoning_model
 from grpo_data import construct_second_pass_input
 
@@ -135,6 +139,18 @@ class ReasoningEvalTest(unittest.TestCase):
         metrics = evaluate_reasoning_model(Model(), tok, data, 4)
         self.assertAlmostEqual(metrics["reasoning_token_f1"], 1.0)
         self.assertAlmostEqual(metrics["step_correctness"], 1.0)
+
+
+class CSVLogTest(unittest.TestCase):
+    def test_log_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "log.csv")
+            evaluation._log_csv({"a": 0.5, "b": 1.0}, path)
+            with open(path, newline="") as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["a"], "0.5")
+            self.assertEqual(rows[0]["b"], "1.0")
 
 if __name__ == '__main__':
     unittest.main()

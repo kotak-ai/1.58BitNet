@@ -45,6 +45,7 @@ class EvaluationCLITest(unittest.TestCase):
                 two_layer=False,
                 guiding_prompt='Review and correct the answer:',
                 second_max_length=20,
+                csv_log=None,
             )
 
 
