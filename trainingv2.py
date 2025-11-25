@@ -6,6 +6,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, LlamaConfig
 from safetensors.torch import load_file
 from llama_model import LlamaModel
+from device_utils import get_device
 import evaluation
 from training_utils import save_checkpoint, load_checkpoint, cosine_lr_wd
 from custom_gradient_checkpointing import custom_checkpoint
@@ -15,7 +16,7 @@ import argparse
 import numpy as np
 import math
 
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+device = get_device()
 
 def download_dataset(dataset_path):
     if dataset_path.startswith("https://huggingface.co/datasets/"):
@@ -160,7 +161,7 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
     print(f"Total parameters: {total_params:.3f}M")
     print(f"Trainable parameters: {trainable_params:.3f}M")
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = get_device()
     model.to(device)
 
     torch.autograd.set_detect_anomaly(True)
@@ -171,7 +172,7 @@ def train(model, tokenizer, dataset, batch_size, num_epochs, learning_rate, iter
             batch = tuple(t.to(device) for t in batch)
             loss_value, ntoks = loss(model, *batch, use_checkpoint=use_checkpoint)
             loss_value = loss_value / grad_accum_steps
-            loss_value.backward(retain_graph=True)
+            loss_value.backward()  # Don't retain graph - causes memory leak
 
             if (batch_idx + 1) % grad_accum_steps == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -289,7 +290,7 @@ def run(args: argparse.Namespace):
     model = LlamaModel(config)
 
     # Move the model to the appropriate device
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = get_device()
     model.to(device)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)

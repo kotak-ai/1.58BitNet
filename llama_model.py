@@ -1,11 +1,13 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 try:
     from transformers import LlamaConfig, AutoTokenizer
 except Exception:  # pragma: no cover - transformers may be missing
     LlamaConfig = AutoTokenizer = None  # type: ignore[misc]
+
 from quantization_utils import (
     quantize_tensor,
     activation_quant,
@@ -18,12 +20,15 @@ from quantization_utils import (
     quantize_tensor_1_58bit,
     pack_quantized_tensor,
     unpack_quantized_tensor,
+    ste_round_clamp,
 )
+from device_utils import get_device
 
 try:
     from safetensors.torch import save_file, load_file
 except Exception:  # pragma: no cover - safetensors may be missing
     save_file = load_file = None  # type: ignore[misc]
+
 import os
 import json
 import shutil
@@ -35,277 +40,342 @@ from h_bitlinear import HBitLinear
 
 
 def RMSNorm(x, eps=1e-6):
+    """RMS Normalization function."""
     return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
 
 
+class RMSNormLayer(nn.Module):
+    """RMS Normalization as a layer (LLaMA style)."""
+
+    def __init__(self, hidden_size, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.eps = eps
+
+    def forward(self, x):
+        norm = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return norm * self.weight
+
+
 class QuantizedEmbedding(nn.Module):
+    """Embedding layer with optional quantization using STE."""
+
     def __init__(self, num_embeddings, embedding_dim, experiment=False):
         super().__init__()
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
-        self.weight = nn.Parameter(torch.randn(num_embeddings, embedding_dim))
+        self.weight = nn.Parameter(torch.randn(num_embeddings, embedding_dim) * 0.02)
         self.eps = 1e-5
         self.experiment = experiment
         self.weight_scale = None
 
     def forward(self, input):
         if self.experiment:
+            # Use STE for gradient flow through quantization
             q, scale = quantize_tensor_1_58bit(self.weight, self.eps)
             self.weight_scale = scale
             quantized_weight = q.float() * scale
         else:
-            quantized_weight = quantize_tensor(self.weight, self.eps).float()
-        return nn.functional.embedding(input, quantized_weight)
+            # Standard embedding without quantization during training
+            quantized_weight = self.weight
+        return F.embedding(input, quantized_weight)
 
 
 class BitLinear(nn.Linear):
+    """Linear layer with ternary quantization using STE for gradient flow."""
+
     def __init__(self, in_features, out_features, bias=True, num_groups=1):
         super(BitLinear, self).__init__(in_features, out_features, bias)
         self.num_groups = num_groups
         self.eps = 1e-5
-        self.quantized_weight = None
         self.weight_scale = None
 
-    def ternarize_weights_groupwise(self):
-        if self.quantized_weight is None:
-            scale = 1.0 / self.weight.abs().mean().clamp_(min=1e-5)
-            self.quantized_weight = (self.weight * scale).round().clamp_(-1, 1) / scale
-        return self.quantized_weight
-
     def forward(self, x):
-        w = self.weight
-        x_float = x.to(torch.float32)  # Convert input to float32
+        x_float = x.to(torch.float32)
         x_norm = RMSNorm(x_float)
         x_quant = activation_quant(x_norm)
 
-        # Perform quantization on a detached copy of the weights
-        w_detached = w.detach()
-        q, scale = quantize_tensor_1_58bit(w_detached, self.eps)
-        self.weight_scale = scale
-        w_quant = q.float() * scale
-        # w_quant = self.ternarize_weights_groupwise()
-        y = nn.functional.linear(x_quant, w_quant)
+        # Quantize weights using STE (no .detach()!)
+        # This allows gradients to flow through quantization
+        w_scale = self.weight.abs().mean().clamp(min=self.eps)
+        w_q = ste_round_clamp(self.weight / w_scale, -1, 1)
+        w_quant = w_q * w_scale
+        self.weight_scale = w_scale
+
+        y = F.linear(x_quant, w_quant, self.bias)
         return y
 
 
 def rotate_half(x):
+    """Rotate half the hidden dims for rotary position embeddings."""
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)
 
 
+def compute_rotary_embeddings(seq_length, head_dim, device, base=10000.0):
+    """Compute correct rotary position embeddings.
+
+    Returns cos and sin tensors of shape [seq_length, head_dim].
+    """
+    # Compute inverse frequencies for half the head dimension
+    half_dim = head_dim // 2
+    inv_freq = 1.0 / (base ** (torch.arange(0, half_dim, dtype=torch.float32, device=device) / half_dim))
+
+    # Compute position indices
+    position_ids = torch.arange(seq_length, dtype=torch.float32, device=device)
+
+    # Compute angles: [seq_length, half_dim]
+    freqs = torch.outer(position_ids, inv_freq)
+
+    # Create full cos/sin by repeating for both halves of head_dim
+    # This ensures all positions in the head dimension are filled
+    cos = torch.cos(freqs).repeat_interleave(2, dim=-1)
+    sin = torch.sin(freqs).repeat_interleave(2, dim=-1)
+
+    return cos, sin
+
+
 def apply_rotary_pos_emb(q, k, cos, sin):
-    # q: (batch_size, seq_length, hidden_size)
-    # k: (batch_size, seq_length, hidden_size)
-    # cos: (seq_length, head_dim)
-    # sin: (seq_length, head_dim)
+    """Apply rotary position embeddings to query and key tensors.
 
-    batch_size, seq_length, hidden_size = q.shape
-    head_dim = cos.shape[-1]
+    Args:
+        q: Query tensor of shape [batch, num_heads, seq_len, head_dim]
+        k: Key tensor of shape [batch, num_heads, seq_len, head_dim]
+        cos: Cosine tensor of shape [seq_len, head_dim]
+        sin: Sine tensor of shape [seq_len, head_dim]
 
-    q = q.view(batch_size, seq_length, -1, head_dim)
-    k = k.view(batch_size, seq_length, -1, head_dim)
-
-    cos = cos.unsqueeze(1)
-    sin = sin.unsqueeze(1)
+    Returns:
+        Rotated q and k tensors.
+    """
+    # Add dimensions for batch and num_heads: [1, 1, seq_len, head_dim]
+    cos = cos.unsqueeze(0).unsqueeze(0)
+    sin = sin.unsqueeze(0).unsqueeze(0)
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
-    return q_embed.view(batch_size, seq_length, hidden_size), k_embed.view(
-        batch_size, seq_length, hidden_size
-    )
+    return q_embed, k_embed
 
 
 class LlamaAttention(nn.Module):
+    """Multi-head attention with proper head dimension reshape."""
+
     def __init__(self, config, linear_cls=HBitLinear):
         super().__init__()
         self.config = config
+        self.num_heads = config.num_attention_heads
         self.head_dim = config.hidden_size // config.num_attention_heads
+        self.hidden_size = config.hidden_size
+
         self.q_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
         self.k_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
         self.v_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
         self.o_proj = linear_cls(config.hidden_size, config.hidden_size, bias=False)
-        self.pretraining_tp = config.pretraining_tp
-        self.kv_cache_quant = kv_cache_quant
+
+        self.pretraining_tp = getattr(config, "pretraining_tp", 1)
 
     def forward(self, hidden_states, attention_mask, cos, sin):
+        batch_size, seq_length, _ = hidden_states.shape
+
+        # Project to Q, K, V
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
-        # Quantize key and value states
-        key_states = self.kv_cache_quant(key_states)
-        value_states = self.kv_cache_quant(value_states)
+        # Reshape to [batch, num_heads, seq_len, head_dim] for multi-head attention
+        query_states = query_states.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
 
-        query_states, key_states = apply_rotary_pos_emb(
-            query_states, key_states, cos, sin
-        )
+        # Apply rotary position embeddings (after reshape!)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        attention_scores = torch.matmul(
-            query_states, key_states.transpose(-1, -2)
-        ) / math.sqrt(self.head_dim)
+        # KV cache quantization only during inference (not training)
+        if not self.training:
+            key_states = kv_cache_quant(key_states, training=False)
+            value_states = kv_cache_quant(value_states, training=False)
 
+        # Compute attention scores: [batch, num_heads, seq_len, seq_len]
+        attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) / math.sqrt(self.head_dim)
+
+        # Apply attention mask if provided
         if attention_mask is not None:
-            attention_scores = attention_scores + attention_mask
+            # Expand mask for num_heads dimension if needed
+            if attention_mask.dim() == 2:
+                # [batch, seq_len] -> [batch, 1, 1, seq_len]
+                attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+            elif attention_mask.dim() == 3:
+                # [batch, seq_len, seq_len] -> [batch, 1, seq_len, seq_len]
+                attention_mask = attention_mask.unsqueeze(1)
 
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+            # Convert mask to attention bias (0 -> 0, 1 -> -inf for masked positions)
+            # Assume mask is 1 for attended positions, 0 for masked
+            attention_mask = attention_mask.to(dtype=attention_scores.dtype)
+            attention_scores = attention_scores + (1.0 - attention_mask) * torch.finfo(attention_scores.dtype).min
 
+        # Softmax and apply to values
+        attention_probs = F.softmax(attention_scores, dim=-1)
+
+        # Compute attention output: [batch, num_heads, seq_len, head_dim]
         attention_output = torch.matmul(attention_probs, value_states)
+
+        # Reshape back to [batch, seq_len, hidden_size]
+        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, seq_length, self.hidden_size)
+
+        # Output projection
         attention_output = self.o_proj(attention_output)
 
         return attention_output
 
 
 class LlamaMLP(nn.Module):
+    """LLaMA MLP with SwiGLU activation."""
+
     def __init__(self, config, linear_cls=HBitLinear):
         super().__init__()
-        self.gate_proj = linear_cls(
-            config.hidden_size, config.intermediate_size, bias=False
-        )
-        self.down_proj = linear_cls(
-            config.intermediate_size, config.hidden_size, bias=False
-        )
-        self.up_proj = linear_cls(
-            config.hidden_size, config.intermediate_size, bias=False
-        )
-        self.pretraining_tp = config.pretraining_tp
-        self.act_quant_8bit = act_quant_8bit
-        self.act_quant_4bit = act_quant_4bit
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+
+        self.gate_proj = linear_cls(config.hidden_size, config.intermediate_size, bias=False)
+        self.down_proj = linear_cls(config.intermediate_size, config.hidden_size, bias=False)
+        self.up_proj = linear_cls(config.hidden_size, config.intermediate_size, bias=False)
+
+        self.pretraining_tp = getattr(config, "pretraining_tp", 1)
 
     def forward(self, hidden_states):
         if self.pretraining_tp > 1:
-            slice = self.intermediate_size // self.pretraining_tp
-            gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
-            up_proj_slices = self.up_proj.weight.split(slice, dim=0)
-            down_proj_slices = self.down_proj.weight.split(slice, dim=1)
+            slice_size = self.intermediate_size // self.pretraining_tp
+            gate_proj_slices = self.gate_proj.weight.split(slice_size, dim=0)
+            up_proj_slices = self.up_proj.weight.split(slice_size, dim=0)
+            down_proj_slices = self.down_proj.weight.split(slice_size, dim=1)
 
             gate_proj = torch.cat(
-                [
-                    F.linear(hidden_states, gate_proj_slices[i])
-                    for i in range(self.pretraining_tp)
-                ],
+                [F.linear(hidden_states, gate_proj_slices[i]) for i in range(self.pretraining_tp)],
                 dim=-1,
             )
             up_proj = torch.cat(
-                [
-                    F.linear(hidden_states, up_proj_slices[i])
-                    for i in range(self.pretraining_tp)
-                ],
+                [F.linear(hidden_states, up_proj_slices[i]) for i in range(self.pretraining_tp)],
                 dim=-1,
             )
 
-            intermediate_states = (gate_proj * up_proj).split(slice, dim=2)
-            intermediate_states = [
-                self.act_quant_8bit(state) for state in intermediate_states
-            ]  # Quantize intermediate states
+            # SwiGLU activation
+            intermediate_states = F.silu(gate_proj) * up_proj
+            intermediate_states = act_quant_8bit(intermediate_states)
 
-            down_proj = [
-                F.linear(intermediate_states[i], down_proj_slices[i])
+            intermediate_slices = intermediate_states.split(slice_size, dim=2)
+            down_proj = sum(
+                F.linear(intermediate_slices[i], down_proj_slices[i])
                 for i in range(self.pretraining_tp)
-            ]
-            down_proj = sum(down_proj)
+            )
         else:
+            # Standard forward pass with SwiGLU
             gate_proj = self.gate_proj(hidden_states)
             up_proj = self.up_proj(hidden_states)
-            hidden_gelu = gate_proj * up_proj
-            hidden_gelu = self.act_quant_8bit(hidden_gelu)  # Quantize hidden_gelu
+
+            # SwiGLU: silu(gate) * up
+            hidden_gelu = F.silu(gate_proj) * up_proj
+            hidden_gelu = act_quant_8bit(hidden_gelu)
+
             down_proj = self.down_proj(hidden_gelu)
 
-        down_proj = self.act_quant_4bit(down_proj)  # Quantize down_proj
+        down_proj = act_quant_4bit(down_proj)
         return down_proj
 
 
 class LlamaDecoderLayer(nn.Module):
+    """Single transformer decoder layer."""
+
     def __init__(self, config, experiment=False, linear_cls=HBitLinear):
         super().__init__()
         self.self_attn = LlamaAttention(config, linear_cls=linear_cls)
         self.mlp = LlamaMLP(config, linear_cls=linear_cls)
-        self.norm1 = nn.LayerNorm(
-            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5)
-        )
-        self.norm2 = nn.LayerNorm(
-            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5)
-        )
+
+        # Use RMSNorm like original LLaMA
+        self.input_layernorm = RMSNormLayer(config.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-5))
+        self.post_attention_layernorm = RMSNormLayer(config.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-5))
+
         self.experiment = experiment
 
     def forward(self, hidden_states, attention_mask, cos, sin):
+        # Pre-norm architecture
         residual = hidden_states
-        # Use gradient checkpointing for the attention block to save memory
+        hidden_states = self.input_layernorm(hidden_states)
+
+        # Self attention with gradient checkpointing
         hidden_states = custom_checkpoint(
             self.self_attn, hidden_states, attention_mask, cos, sin
         )
-        if self.experiment:
-            qw, sw = quantize_tensor_1_58bit(self.norm1.weight)
-            qb, sb = quantize_tensor_1_58bit(self.norm1.bias)
-            self.norm1.weight = nn.Parameter(qw.float() * sw)
-            self.norm1.bias = nn.Parameter(qb.float() * sb)
-        hidden_states = self.norm1(hidden_states)
         hidden_states = residual + hidden_states
 
+        # MLP
         residual = hidden_states
-        # Apply gradient checkpointing to the MLP as well
+        hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = custom_checkpoint(self.mlp, hidden_states)
-        if self.experiment:
-            qw, sw = quantize_tensor_1_58bit(self.norm2.weight)
-            qb, sb = quantize_tensor_1_58bit(self.norm2.bias)
-            self.norm2.weight = nn.Parameter(qw.float() * sw)
-            self.norm2.bias = nn.Parameter(qb.float() * sb)
-        hidden_states = self.norm2(hidden_states)
         hidden_states = residual + hidden_states
 
         return hidden_states
 
 
 class LlamaModel(nn.Module):
+    """LLaMA model with 1.58-bit quantization."""
+
     def __init__(self, config, experiment=False, linear_cls=HBitLinear):
         super().__init__()
         self.config = config
+
         self.embed_tokens = QuantizedEmbedding(
             config.vocab_size, config.hidden_size, experiment=experiment
         )
-        self.layers = nn.ModuleList(
-            [
-                LlamaDecoderLayer(config, experiment=experiment, linear_cls=linear_cls)
-                for _ in range(config.num_hidden_layers)
-            ]
-        )
-        self.norm = nn.LayerNorm(
-            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-5)
-        )
 
-        # Add lm_head
-        # self.lm_head = BitLinear(config.hidden_size, config.vocab_size, bias=False)
+        self.layers = nn.ModuleList([
+            LlamaDecoderLayer(config, experiment=experiment, linear_cls=linear_cls)
+            for _ in range(config.num_hidden_layers)
+        ])
+
+        self.norm = RMSNormLayer(config.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-5))
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
-        # Initialize embed_positions method
-        self.embed_positions = self.create_embed_positions()
-
-        # Move the model to the appropriate device
-        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        # Move to best available device
+        device = get_device()
         self.to(device)
 
-    def create_embed_positions(self):
-        max_seq_length = self.config.max_position_embeddings
-        hidden_size = self.config.hidden_size
+    def get_input_embeddings(self):
+        return self.embed_tokens
 
-        def _embed_positions(position_ids):
-            batch_size, seq_length = position_ids.shape
-            position_embeddings = torch.zeros(
-                batch_size, seq_length, hidden_size, device=position_ids.device
-            )
-            inv_freq = 1.0 / (
-                10000
-                ** (
-                    torch.arange(0, hidden_size, 2, device=position_ids.device)
-                    / hidden_size
-                )
-            )
-            sinusoid_inp = torch.einsum("bi,j->bij", position_ids, inv_freq)
-            position_embeddings[..., 0::2] = torch.sin(sinusoid_inp)
-            position_embeddings[..., 1::2] = torch.cos(sinusoid_inp)
-            return position_embeddings
+    def set_input_embeddings(self, value):
+        self.embed_tokens = value
 
-        return _embed_positions
+    def forward(self, input_ids, attention_mask=None, **kwargs):
+        """Forward pass through the model.
+
+        Args:
+            input_ids: Input token IDs [batch, seq_len]
+            attention_mask: Optional attention mask [batch, seq_len] or [batch, seq_len, seq_len]
+            **kwargs: Additional arguments (cos, sin for pre-computed RoPE)
+
+        Returns:
+            Logits tensor [batch, seq_len, vocab_size]
+        """
+        hidden_states = self.embed_tokens(input_ids)
+
+        # Get or compute rotary embeddings
+        cos = kwargs.get("cos", None)
+        sin = kwargs.get("sin", None)
+
+        if cos is None or sin is None:
+            seq_length = input_ids.size(1)
+            head_dim = self.config.hidden_size // self.config.num_attention_heads
+            cos, sin = compute_rotary_embeddings(seq_length, head_dim, input_ids.device)
+
+        # Process through decoder layers
+        for layer in self.layers:
+            hidden_states = layer(hidden_states, attention_mask, cos, sin)
+
+        # Final normalization and LM head
+        hidden_states = self.norm(hidden_states)
+        lm_logits = self.lm_head(hidden_states)
+
+        return lm_logits
 
     def generate(
         self,
@@ -318,7 +388,6 @@ class LlamaModel(nn.Module):
         top_p=None,
     ):
         """Simple autoregressive generation returning token ids."""
-
         device = self.lm_head.weight.device
         input_ids = input_ids.to(device)
         if attention_mask is not None:
@@ -339,26 +408,24 @@ class LlamaModel(nn.Module):
                     next_token_logits = logits_mask
 
                 if top_p is not None and 0 < top_p < 1.0:
-                    sorted_logits, sorted_indices = torch.sort(
-                        next_token_logits, descending=True
-                    )
-                    cumulative_probs = torch.cumsum(
-                        torch.nn.functional.softmax(sorted_logits, dim=-1), dim=-1
-                    )
+                    sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
                     sorted_indices_to_remove = cumulative_probs > top_p
                     sorted_logits[sorted_indices_to_remove] = float("-inf")
                     logits_mask = torch.full_like(next_token_logits, float("-inf"))
                     logits_mask.scatter_(-1, sorted_indices, sorted_logits)
                     next_token_logits = logits_mask
 
-                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                probs = F.softmax(next_token_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
                 next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
             generated = torch.cat([generated, next_token], dim=1)
+
             if (
-                self.config.eos_token_id is not None
+                hasattr(self.config, "eos_token_id")
+                and self.config.eos_token_id is not None
                 and (next_token == self.config.eos_token_id).all()
             ):
                 break
@@ -375,6 +442,7 @@ class LlamaModel(nn.Module):
 
     @classmethod
     def load_pretrained(cls, model_path, linear_cls=HBitLinear):
+        """Load a pretrained model from a directory."""
         if LlamaConfig is None:
             raise ImportError("transformers is required to load pretrained models")
         from quantized_model_io import load_quantized_model
@@ -384,118 +452,47 @@ class LlamaModel(nn.Module):
         load_quantized_model(model, model_path)
         return model
 
-    def forward(self, input_ids, attention_mask, **kwargs):
-        hidden_states = self.embed_tokens(input_ids)
-
-        # Get cos and sin values from kwargs
-        cos = kwargs.get("cos", None)
-        sin = kwargs.get("sin", None)
-
-        # Generate cos and sin values if not provided
-        if cos is None or sin is None:
-            seq_length = input_ids.size(1)
-            head_dim = self.config.hidden_size // self.config.num_attention_heads
-            position_ids = torch.arange(seq_length, device=input_ids.device)
-            cos = torch.zeros(seq_length, head_dim, device=input_ids.device)
-            sin = torch.zeros(seq_length, head_dim, device=input_ids.device)
-            div_term = torch.exp(
-                torch.arange(0, head_dim, 2, device=input_ids.device)
-                * (-torch.log(torch.tensor(10000.0)) / head_dim)
-            )
-            cos[:, 0::2] = torch.cos(position_ids[:, None] * div_term)
-            sin[:, 1::2] = torch.sin(position_ids[:, None] * div_term)
-
-        for layer in self.layers:
-            hidden_states = layer(hidden_states, attention_mask, cos, sin)
-        hidden_states = self.norm(hidden_states)
-        lm_logits = self.lm_head(hidden_states)
-        return lm_logits
-
     def save_pretrained(self, save_directory):
+        """Save the model and config to a directory."""
         if AutoTokenizer is None:
             raise ImportError("transformers is required to save pretrained models")
         from quantized_model_io import save_quantized_model
 
-        # Update the model configuration with the quantized model's parameters
+        os.makedirs(save_directory, exist_ok=True)
+
+        # Update config
         self.config.hidden_size = self.embed_tokens.embedding_dim
-        self.config.num_attention_heads = (
-            self.config.hidden_size // self.layers[0].self_attn.head_dim
-        )
+        self.config.num_attention_heads = self.config.hidden_size // self.layers[0].self_attn.head_dim
         self.config.num_hidden_layers = len(self.layers)
-        self.config.intermediate_size = self.layers[0].mlp.gate_proj.out_features
-        self.config.max_position_embeddings = self.embed_tokens.num_embeddings
+        self.config.intermediate_size = self.layers[0].mlp.intermediate_size
         self.config.vocab_size = self.embed_tokens.num_embeddings
 
         if hasattr(self.config, "num_key_value_heads"):
             self.config.num_key_value_heads = self.config.num_attention_heads
 
-        self.config.hidden_act = self.layers[0].mlp.__class__.__name__.lower()
-        self.config.initializer_range = self.embed_tokens.weight.data.std().item()
         self.config.use_cache = True
         self.config.tie_word_embeddings = False
-        self.config.model_type = self.__class__.__name__.lower()
-
-        if hasattr(self.layers[0].self_attn, "attention_dropout"):
-            self.config.attention_dropout = self.layers[0].self_attn.attention_dropout
-        else:
-            self.config.attention_dropout = 0.0
-
-        # Find the hidden_dropout value from the model's layers
-        hidden_dropout = None
-        for layer in self.layers:
-            for module in layer.modules():
-                if isinstance(module, nn.Dropout):
-                    hidden_dropout = module.p
-                    break
-            if hidden_dropout is not None:
-                break
-
-        if hidden_dropout is None:
-            hidden_dropout = 0.0  # Set a default value if no dropout module is found
-
-        self.config.hidden_dropout = hidden_dropout
-        self.config.attention_bias = False
-
-        if hasattr(self.config, "pretraining_tp"):
-            self.config.pretraining_tp = self.config.pretraining_tp
-
-        self.config.bos_token_id = (
-            self.config.bos_token_id if hasattr(self.config, "bos_token_id") else None
-        )
-        self.config.eos_token_id = (
-            self.config.eos_token_id if hasattr(self.config, "eos_token_id") else None
-        )
+        self.config.model_type = "llama"
         self.config.torch_dtype = str(self.embed_tokens.weight.dtype).split(".")[-1]
-        self.config.transformers_version = "4.39.0.dev0"
 
-        # Save the updated model configuration
+        # Save config
         self.config.save_pretrained(save_directory)
 
-        # Load the pre-trained LLaMA tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(
-            "DeepInfra/Llama-2-70b-chat-tokenizer"
-        )
-        # Save the tokenizer files to the save directory
-        tokenizer.save_pretrained(save_directory)
+        # Try to save tokenizer
+        try:
+            tokenizer = AutoTokenizer.from_pretrained("DeepInfra/Llama-2-70b-chat-tokenizer")
+            tokenizer.save_pretrained(save_directory)
+        except Exception:
+            pass  # Tokenizer download may fail
 
-        # Copy additional tokenizer files if available
-        additional_files = [
-            "tokenizer.model",
-            "tokenizer_config.json",
-            "tokenizer.json",
-            "special_tokens_map.json",
-        ]
-        for file_name in additional_files:
-            src_path = os.path.join("DeepInfra/Llama-2-70b-chat-tokenizer", file_name)
-            dst_path = os.path.join(save_directory, file_name)
-            if os.path.isfile(src_path):
-                shutil.copyfile(src_path, dst_path)
-
+        # Save model weights
         save_quantized_model(self, save_directory)
 
     def save_sharded_safetensors(self, output_path, shard_size=9 * 1024 * 1024 * 1024):
+        """Save model in sharded safetensors format."""
         if save_file is None:
             raise ImportError("safetensors is required to save sharded weights")
+
         state_dict = self.state_dict()
         num_shards = math.ceil(
             sum(v.numel() * v.element_size() for v in state_dict.values()) / shard_size
@@ -529,10 +526,8 @@ class LlamaModel(nn.Module):
             save_file(shard_state_dict, shard_file)
             print(f"Saved shard {shard_id} at: {shard_file}")
 
-    def create_additional_files(
-        self, save_directory, model_path, state_dicts, num_shards
-    ):
-        # Create model.safetensors.index.json
+    def create_additional_files(self, save_directory, model_path, state_dicts, num_shards):
+        """Create index and generation config files."""
         weight_map = {}
         total_size = 0
         for shard_id, state_dict in enumerate(state_dicts, start=1):
@@ -543,12 +538,9 @@ class LlamaModel(nn.Module):
                 total_size += math.ceil(v.numel() * 1.58 / 8) + v.dim() * 4
 
         index_data = {"metadata": {"total_size": total_size}, "weight_map": weight_map}
-        with open(
-            os.path.join(save_directory, "model.safetensors.index.json"), "w"
-        ) as f:
+        with open(os.path.join(save_directory, "model.safetensors.index.json"), "w") as f:
             json.dump(index_data, f, indent=4)
 
-        # Create generation_config.json
         generation_config = {
             "max_length": 4096,
             "min_length": 0,
@@ -562,7 +554,6 @@ class LlamaModel(nn.Module):
             "length_penalty": 1.0,
             "no_repeat_ngram_size": 0,
             "num_return_sequences": 1,
-            "attention_mask_column": 0,
         }
         with open(os.path.join(save_directory, "generation_config.json"), "w") as f:
             json.dump(generation_config, f, indent=4)

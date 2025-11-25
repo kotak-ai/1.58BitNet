@@ -2,35 +2,131 @@ import torch
 import numpy as np
 
 
+# === Straight-Through Estimator (STE) Functions ===
+
+class _STERound(torch.autograd.Function):
+    """Straight-Through Estimator for rounding.
+
+    Forward pass: applies rounding
+    Backward pass: passes gradients through unchanged (identity)
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        return torch.round(x)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        return grad_output
+
+
+class _STEClamp(torch.autograd.Function):
+    """Straight-Through Estimator for clamping.
+
+    Forward pass: applies clamping
+    Backward pass: passes gradients through unchanged (identity)
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, min_val: float, max_val: float) -> torch.Tensor:
+        return torch.clamp(x, min_val, max_val)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple:
+        return grad_output, None, None
+
+
+def ste_round(x: torch.Tensor) -> torch.Tensor:
+    """Round with straight-through gradient estimator."""
+    return _STERound.apply(x)
+
+
+def ste_clamp(x: torch.Tensor, min_val: float, max_val: float) -> torch.Tensor:
+    """Clamp with straight-through gradient estimator."""
+    return _STEClamp.apply(x, min_val, max_val)
+
+
+def ste_round_clamp(x: torch.Tensor, min_val: float, max_val: float) -> torch.Tensor:
+    """Round and clamp with straight-through gradient estimator."""
+    return ste_clamp(ste_round(x), min_val, max_val)
+
+
+# === Normalization Functions ===
+
 def RMSNorm(x, eps: float = 1e-6):
     """Compute RMS normalization used before quantization."""
     return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
 
+
+# === Activation Quantization Functions ===
+
 def activation_quant(x):
+    """Quantize activations to int8 range with STE and dequantize back."""
     scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
-    y = (x * scale).round().clamp_(-128, 127) / scale
+    y = ste_round_clamp(x * scale, -128, 127) / scale
     return y
+
 
 def weight_quant(w):
+    """Quantize weights to ternary (-1, 0, 1) with STE and dequantize back."""
     scale = 1.0 / w.abs().mean().clamp_(min=1e-5)
-    u = (w * scale).round().clamp_(-1, 1) / scale
+    u = ste_round_clamp(w * scale, -1, 1) / scale
     return u
 
+
 def activation_norm_quant(x):
+    """Normalize and quantize activations, returning quantized values and scale."""
     x = RMSNorm(x)
     scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
-    y = (x * scale).round().clamp_(-128, 127)
+    y = ste_round_clamp(x * scale, -128, 127)
     return y, scale
 
+
 def act_quant_8bit(x):
+    """Quantize activations to int8 range with STE and dequantize back.
+
+    This function quantizes to [-128, 127] range and then dequantizes
+    back to the original scale to preserve magnitude for downstream operations.
+    """
     scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
-    y = (x * scale).round().clamp_(-128, 127)
-    return y
+    y = ste_round_clamp(x * scale, -128, 127)
+    return y / scale  # Dequantize back to original scale
+
 
 def act_quant_4bit(x):
+    """Quantize activations to int4 range with STE and dequantize back.
+
+    This function quantizes to [-8, 7] range and then dequantizes
+    back to the original scale to preserve magnitude for downstream operations.
+    """
     scale = 7.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
-    y = (x * scale).round().clamp_(-8, 7)
-    return y
+    y = ste_round_clamp(x * scale, -8, 7)
+    return y / scale  # Dequantize back to original scale
+
+
+def act_quant_8bit_raw(x):
+    """Quantize activations to int8 range, returning raw quantized values.
+
+    Use this when you need the actual integer values (e.g., for integer GEMM).
+    Returns tuple of (quantized_tensor, scale) so caller can dequantize.
+    """
+    scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
+    y = ste_round_clamp(x * scale, -128, 127)
+    return y, scale
+
+
+def act_quant_4bit_raw(x):
+    """Quantize activations to int4 range, returning raw quantized values.
+
+    Use this when you need the actual integer values (e.g., for integer GEMM).
+    Returns tuple of (quantized_tensor, scale) so caller can dequantize.
+    """
+    scale = 7.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
+    y = ste_round_clamp(x * scale, -8, 7)
+    return y, scale
+
+
+# === Low-Bit Matrix Multiplication ===
 
 class _LowBitMatMul(torch.autograd.Function):
     """Low-bit matrix multiply supporting CPU, CUDA and MPS."""
@@ -107,24 +203,71 @@ def gemm_lowbit(x: torch.Tensor, w: torch.Tensor, weight_shape=None) -> torch.Te
     else:
         raise TypeError("Unsupported weight dtype")
 
+
+# === Tensor Quantization Functions ===
+
 def quantize_tensor(x: torch.Tensor, eps: float = 1e-5):
+    """Quantize tensor to ternary values (-1, 0, 1) using mean absolute scale."""
     gamma = x.abs().mean()
-    quantized_x = torch.clamp(torch.round(x / (gamma + eps)), -1, 1).to(torch.int8)
+    quantized_x = ste_round_clamp(x / (gamma + eps), -1, 1).to(torch.int8)
     return quantized_x
 
+
 def quantize_tensor_1_58bit(x: torch.Tensor, eps: float = 1e-5):
-    """Ternary quantization with a mean absolute scale.
+    """Ternary quantization with a mean absolute scale and STE.
 
     Returns the quantized tensor and the scale used for reconstruction.
+    Uses Straight-Through Estimator to allow gradient flow during training.
+    """
+    scale = x.abs().mean().clamp(min=eps)
+    q = ste_round_clamp(x / scale, -1, 1).to(torch.int8)
+    return q, scale
+
+
+def quantize_tensor_1_58bit_no_ste(x: torch.Tensor, eps: float = 1e-5):
+    """Ternary quantization without STE (for inference only).
+
+    Returns the quantized tensor and the scale used for reconstruction.
+    This version uses regular round/clamp and should only be used during inference.
     """
     scale = x.abs().mean().clamp(min=eps)
     q = torch.round(x / scale).clamp_(-1, 1).to(torch.int8)
     return q, scale
 
-def kv_cache_quant(x):
+
+# === KV Cache Quantization ===
+
+def kv_cache_quant(x, training: bool = False):
+    """Quantize key/value cache to 4-bit range.
+
+    Args:
+        x: Input tensor to quantize
+        training: If True, uses STE and returns dequantized values.
+                  If False, returns raw quantized values for inference.
+
+    Returns:
+        Quantized (and dequantized if training) tensor.
+    """
     scale = 15.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
-    y = (x * scale).round().clamp_(-16, 15)
-    return y
+    if training:
+        # During training: use STE and dequantize to preserve gradients
+        y = ste_round_clamp(x * scale, -16, 15)
+        return y / scale
+    else:
+        # During inference: return quantized values
+        y = torch.round(x * scale).clamp_(-16, 15)
+        return y
+
+
+def kv_cache_quant_with_scale(x):
+    """Quantize key/value cache and return both quantized values and scale.
+
+    Useful when you need to store the scale separately for later dequantization.
+    """
+    scale = 15.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
+    y = ste_round_clamp(x * scale, -16, 15)
+    return y, scale
+
 
 # === Ternary Packing Utilities ===
 
